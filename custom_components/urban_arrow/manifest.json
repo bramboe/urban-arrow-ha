@@ -1,0 +1,30 @@
+{
+  "domain": "urban_arrow",
+  "name": "Urban Arrow",
+  "bluetooth": [
+    {
+      "local_name": "URBANARROW"
+    },
+    {
+      "service_uuid": "00001580-0000-1000-8000-00805f9b34fb"
+    }
+  ],
+  "codeowners": [
+    "@bramboe"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "bluetooth_adapters"
+  ],
+  "documentation": "https://github.com/bramboe/urban-arrow-ha",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/bramboe/urban-arrow-ha/issues",
+  "loggers": [
+    "bleak_retry_connector"
+  ],
+  "requirements": [
+    "bleak-retry-connector>=3.0.0"
+  ],
+  "version": "0.1.0"
+}

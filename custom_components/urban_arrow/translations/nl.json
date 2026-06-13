@@ -1,0 +1,49 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "confirm": {
+        "title": "Urban Arrow toevoegen",
+        "description": "Voeg de fiets toe die is gevonden op {address}. Zorg dat het display aan staat tijdens het instellen.",
+        "data": {
+          "device_name": "Naam"
+        }
+      },
+      "user": {
+        "title": "Urban Arrow",
+        "description": "Kies een gevonden fiets, of voer het Bluetooth-adres handmatig in.",
+        "data": {
+          "address": "Fiets"
+        }
+      },
+      "manual": {
+        "title": "Adres invoeren",
+        "description": "Voer het Bluetooth-adres van de fiets in (bijv. FD:F1:8F:61:1D:F7).",
+        "data": {
+          "address": "Bluetooth-adres"
+        }
+      }
+    },
+    "error": {
+      "invalid_address": "Dit is geen geldig Bluetooth-adres."
+    },
+    "abort": {
+      "already_configured": "Deze fiets is al toegevoegd.",
+      "no_devices_found": "Geen Urban Arrow gevonden. Zet het display aan en breng de fiets bij een Bluetooth-proxy."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": { "name": "Batterij" },
+      "odometer": { "name": "Kilometerstand" },
+      "last_updated": { "name": "Laatst bijgewerkt" },
+      "connection_status": {
+        "name": "Verbindingsstatus",
+        "state": {
+          "connected": "Verbonden",
+          "disconnected": "Niet verbonden"
+        }
+      }
+    }
+  }
+}
