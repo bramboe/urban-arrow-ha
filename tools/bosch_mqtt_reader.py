@@ -2,14 +2,18 @@
 """Bosch eBike (Urban Arrow) BLE -> MQTT reader for Home Assistant.
 
 Runs on a Linux host that is already BONDED + trusted with the bike (pair once
-with bluetoothctl). Each cycle it scans for the bike (so it only connects when
-the bike is advertising = on and not held by the phone app), reads the eb21
-telemetry snapshot over the encrypted bonded link, and publishes battery /
-odometer to MQTT using Home Assistant discovery.
+with bluetoothctl). It mimics how the phone stays connected: it CONTINUOUSLY
+tries to connect (so it catches the bike's short advertising window on power-up),
+then HOLDS the connection and subscribes to eb21 notifications for live updates.
+On disconnect it immediately resumes trying. The bond survives reboots, so after
+a server restart this service just reconnects automatically — no re-pairing.
+
+Battery / odometer / last_updated are published to MQTT via HA discovery.
 
 Config via environment variables (see the systemd unit):
   BIKE_ADDRESS, MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS,
-  POLL_INTERVAL (s), SCAN_TIMEOUT (s)
+  RECONNECT_INTERVAL (s, tight retry while disconnected),
+  REFRESH_INTERVAL (s, re-read eb21 while connected)
 """
 
 from __future__ import annotations
@@ -31,17 +35,16 @@ MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "")
 MQTT_PASS = os.getenv("MQTT_PASS", "")
 
-POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))
-SCAN_TIMEOUT = float(os.getenv("SCAN_TIMEOUT", "15"))
+RECONNECT_INTERVAL = float(os.getenv("RECONNECT_INTERVAL", "3"))
+REFRESH_INTERVAL = float(os.getenv("REFRESH_INTERVAL", "60"))
+SCAN_TIMEOUT = float(os.getenv("SCAN_TIMEOUT", "10"))
 
 DISC_PREFIX = "homeassistant"
 NODE = "urban_arrow"
 AVAIL_TOPIC = f"{NODE}/availability"
 STATE_TOPIC = f"{NODE}/state"
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("bosch-reader")
 
 
@@ -79,6 +82,20 @@ def parse_varints(data: bytes) -> dict[int, int]:
     return fields
 
 
+def to_state(fields: dict[int, int]) -> dict | None:
+    """Map eb21 fields to the MQTT state payload (only frames with battery)."""
+    if 10 not in fields:
+        return None
+    out: dict[str, object] = {"battery": fields[10]}
+    if 9 in fields:
+        out["odometer"] = round(fields[9] / 1000, 1)
+    if 11 in fields:
+        out["last_updated"] = time.strftime(
+            "%Y-%m-%dT%H:%M:%S%z", time.localtime(fields[11])
+        )
+    return out
+
+
 # ------------------------------------------------------------------- MQTT
 DEVICE = {
     "identifiers": [NODE],
@@ -89,13 +106,9 @@ DEVICE = {
 
 
 def _on_connect(client, _userdata, _flags, reason, _properties=None):
-    """Re-announce availability + discovery on every (re)connect."""
     rc = getattr(reason, "value", reason)
     if rc != 0:
-        log.error(
-            "MQTT connection REFUSED (reason=%s) — check MQTT_USER/MQTT_PASS "
-            "and that the Mosquitto login exists", reason
-        )
+        log.error("MQTT connection REFUSED (reason=%s) — check MQTT_USER/MQTT_PASS", reason)
         return
     client.publish(AVAIL_TOPIC, "online", retain=True)
     _publish_discovery(client)
@@ -114,9 +127,7 @@ def _publish_discovery(client: mqtt.Client) -> None:
             **extra,
         }
         client.publish(
-            f"{DISC_PREFIX}/sensor/{NODE}/{obj_id}/config",
-            json.dumps(payload),
-            retain=True,
+            f"{DISC_PREFIX}/sensor/{NODE}/{obj_id}/config", json.dumps(payload), retain=True
         )
 
     cfg("battery", "Battery", device_class="battery",
@@ -128,9 +139,7 @@ def _publish_discovery(client: mqtt.Client) -> None:
 
 def make_mqtt() -> mqtt.Client:
     try:
-        client = mqtt.Client(
-            mqtt.CallbackAPIVersion.VERSION2, client_id="urban_arrow_reader"
-        )
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="urban_arrow_reader")
     except AttributeError:  # paho-mqtt < 2.0
         client = mqtt.Client(client_id="urban_arrow_reader")
     if MQTT_USER:
@@ -143,44 +152,65 @@ def make_mqtt() -> mqtt.Client:
 
 
 # -------------------------------------------------------------------- BLE
-async def read_once() -> dict | None:
-    """Find the bike (if advertising), connect, read eb21, return parsed dict."""
-    device = await BleakScanner.find_device_by_address(ADDRESS, timeout=SCAN_TIMEOUT)
-    if device is None:
-        return None
-    async with BleakClient(device) as client:
-        raw = bytes(await client.read_gatt_char(EB21))
-    fields = parse_varints(raw)
-    out: dict[str, object] = {}
-    if 10 in fields:
-        out["battery"] = fields[10]
-    if 9 in fields:
-        out["odometer"] = round(fields[9] / 1000, 1)
-    if 11 in fields:
-        out["last_updated"] = time.strftime(
-            "%Y-%m-%dT%H:%M:%S%z", time.localtime(fields[11])
-        )
-    return out or None
+def publish_state(mqtt_client: mqtt.Client, raw: bytes) -> None:
+    state = to_state(parse_varints(raw))
+    if state:
+        mqtt_client.publish(STATE_TOPIC, json.dumps(state), retain=True)
+        log.info("published %s", state)
+
+
+async def hold_connection(mqtt_client: mqtt.Client, client: BleakClient) -> None:
+    """Read once, subscribe to eb21 notifications, and hold until disconnect."""
+    log.info("connected to bike %s — holding connection", ADDRESS)
+
+    def _on_notify(_char, data: bytearray) -> None:
+        publish_state(mqtt_client, bytes(data))
+
+    try:
+        publish_state(mqtt_client, bytes(await client.read_gatt_char(EB21)))
+    except Exception as err:  # noqa: BLE001
+        log.warning("initial read failed: %s", err)
+
+    try:
+        await client.start_notify(EB21, _on_notify)
+        log.info("subscribed to eb21 notifications")
+    except Exception as err:  # noqa: BLE001
+        log.warning("could not subscribe to notifications: %s", err)
+
+    # Hold the link; periodically re-read as a fallback if no notifications arrive.
+    while client.is_connected:
+        await asyncio.sleep(REFRESH_INTERVAL)
+        try:
+            publish_state(mqtt_client, bytes(await client.read_gatt_char(EB21)))
+        except Exception as err:  # noqa: BLE001
+            log.debug("refresh read failed: %s", err)
+            break
+
+
+async def ble_loop(mqtt_client: mqtt.Client) -> None:
+    """Continuously try to connect (catching the bike's advertising window)."""
+    while True:
+        try:
+            device = await BleakScanner.find_device_by_address(ADDRESS, timeout=SCAN_TIMEOUT)
+            if device is None:
+                await asyncio.sleep(RECONNECT_INTERVAL)
+                continue
+            async with BleakClient(device) as client:
+                await hold_connection(mqtt_client, client)
+            log.info("bike disconnected — retrying")
+        except Exception as err:  # noqa: BLE001
+            log.debug("connect attempt failed: %s", err)
+        await asyncio.sleep(RECONNECT_INTERVAL)
 
 
 async def main() -> None:
-    client = make_mqtt()
-    log.info("reader started for %s (poll every %ss)", ADDRESS, POLL_INTERVAL)
+    mqtt_client = make_mqtt()
+    log.info("reader started for %s (continuous reconnect)", ADDRESS)
     try:
-        while True:
-            try:
-                data = await read_once()
-                if data:
-                    client.publish(STATE_TOPIC, json.dumps(data), retain=True)
-                    log.info("published %s", data)
-                else:
-                    log.info("bike not reachable (asleep, out of range, or phone connected)")
-            except Exception as err:  # noqa: BLE001
-                log.warning("read failed: %s", err)
-            await asyncio.sleep(POLL_INTERVAL)
+        await ble_loop(mqtt_client)
     finally:
-        client.publish(AVAIL_TOPIC, "offline", retain=True)
-        client.loop_stop()
+        mqtt_client.publish(AVAIL_TOPIC, "offline", retain=True)
+        mqtt_client.loop_stop()
 
 
 if __name__ == "__main__":
