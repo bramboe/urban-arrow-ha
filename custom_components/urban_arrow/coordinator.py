@@ -71,12 +71,14 @@ class UrbanArrowCoordinator(DataUpdateCoordinator[dict[int, int]]):
 
             char = client.services.get_characteristic(BATTERY_CHAR_UUID)
             if char is None:
-                # Surface the full GATT table in the (ERROR-level) message so we
-                # can see what this peripheral actually exposes without needing
-                # debug logging enabled.
+                # The Bosch eb21 characteristic is not reachable over the proxy.
+                # Probe instead: read every readable characteristic and log the
+                # raw bytes (WARNING, so it shows without debug logging) so we
+                # can locate the battery in the Urban Arrow custom service.
+                await self._probe_readables(client)
                 raise UpdateFailed(
                     f"Characteristic {BATTERY_CHAR_UUID} not found on "
-                    f"{self.address}. Available GATT: {self._summarize_services(client)}"
+                    f"{self.address}; probed readable characteristics (see log)"
                 )
 
             raw = await client.read_gatt_char(char)
@@ -93,6 +95,33 @@ class UrbanArrowCoordinator(DataUpdateCoordinator[dict[int, int]]):
                     await client.disconnect()
                 except Exception:  # noqa: BLE001
                     _LOGGER.debug("Disconnect after read failed", exc_info=True)
+
+    async def _probe_readables(self, client: BleakClientWithServiceCache) -> None:
+        """Read every readable characteristic and log its raw bytes (WARNING).
+
+        Diagnostic only: lets us find which characteristic on the Urban Arrow
+        custom service carries the battery / odometer without debug logging.
+        """
+        for service in client.services:
+            # Skip the generic access/attribute services; they carry no telemetry.
+            if service.uuid.startswith(("00001800", "00001801")):
+                continue
+            for char in service.characteristics:
+                if "read" not in char.properties:
+                    continue
+                try:
+                    value = bytes(await client.read_gatt_char(char))
+                    _LOGGER.warning(
+                        "PROBE %s %s = %s (%d bytes)",
+                        self.address,
+                        char.uuid,
+                        value.hex(),
+                        len(value),
+                    )
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "PROBE %s %s read failed: %s", self.address, char.uuid, err
+                    )
 
     def _log_services(self, client: BleakClientWithServiceCache) -> None:
         """Dump the GATT services/characteristics to the debug log (once)."""
