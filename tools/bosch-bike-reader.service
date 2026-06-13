@@ -1,0 +1,22 @@
+[Unit]
+Description=Urban Arrow (Bosch eBike) BLE -> MQTT reader
+After=bluetooth.target network-online.target
+Wants=bluetooth.target network-online.target
+
+[Service]
+Type=simple
+# --- edit these ---
+Environment=BIKE_ADDRESS=A4:0D:BC:8A:41:D7
+Environment=MQTT_HOST=192.168.1.178
+Environment=MQTT_PORT=1883
+Environment=MQTT_USER=CHANGEME
+Environment=MQTT_PASS=CHANGEME
+Environment=POLL_INTERVAL=300
+Environment=SCAN_TIMEOUT=15
+# ------------------
+ExecStart=/root/bosch-reader/venv/bin/python /root/bosch-reader/bosch_mqtt_reader.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
