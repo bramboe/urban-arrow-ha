@@ -20,8 +20,6 @@ from .const import (
     CONF_DEVICE_NAME,
     DEFAULT_NAME,
     DOMAIN,
-    LOCAL_NAME,
-    SERVICE_UUID,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,11 +30,9 @@ def _format_unique_id(address: str) -> str:
     return address.upper()
 
 
-def _is_urban_arrow(info: BluetoothServiceInfoBleak) -> bool:
-    """Return True if a discovery looks like an Urban Arrow bike."""
-    if info.name and info.name.strip().upper() == LOCAL_NAME:
-        return True
-    return bool(info.service_uuids and SERVICE_UUID in info.service_uuids)
+def _is_bike(info: BluetoothServiceInfoBleak) -> bool:
+    """Return True if a discovery looks like the bike's Bosch hub."""
+    return bool(info.name and "smart system" in info.name.lower())
 
 
 class UrbanArrowConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -105,7 +101,7 @@ class UrbanArrowConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         }
         choices: dict[str, str] = {}
         for info in bluetooth.async_discovered_service_info(self.hass, connectable=True):
-            if not _is_urban_arrow(info):
+            if not _is_bike(info):
                 continue
             if _format_unique_id(info.address) in configured:
                 continue
