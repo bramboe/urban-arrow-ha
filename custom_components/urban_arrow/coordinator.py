@@ -8,9 +8,11 @@ so we never hold a scarce proxy connection slot while the bike is idle.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import timedelta
 
+from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.backends.device import BLEDevice
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 from homeassistant.components import bluetooth
@@ -23,6 +25,14 @@ from .protocol import parse_proto_varints
 _LOGGER = logging.getLogger(__name__)
 
 CONNECT_TIMEOUT = 20.0
+
+# Diagnostic probe: characteristics with the notify property on the COMODULE
+# custom services. We subscribe briefly to capture any live telemetry stream.
+NOTIFY_CHARS = (
+    "0000155e-1212-efde-1523-785feabcd123",
+    "00001581-0000-1000-8000-00805f9b34fb",
+)
+NOTIFY_WINDOW_SECONDS = 20.0
 
 
 class UrbanArrowCoordinator(DataUpdateCoordinator[dict[int, int]]):
@@ -72,10 +82,12 @@ class UrbanArrowCoordinator(DataUpdateCoordinator[dict[int, int]]):
             char = client.services.get_characteristic(BATTERY_CHAR_UUID)
             if char is None:
                 # The Bosch eb21 characteristic is not reachable over the proxy.
-                # Probe instead: read every readable characteristic and log the
-                # raw bytes (WARNING, so it shows without debug logging) so we
-                # can locate the battery in the Urban Arrow custom service.
+                # Probe instead: read every readable characteristic and watch the
+                # notify characteristics briefly, logging raw bytes (WARNING, so
+                # it shows without debug logging) to locate the battery in the
+                # COMODULE custom service.
                 await self._probe_readables(client)
+                await self._probe_notifications(client)
                 raise UpdateFailed(
                     f"Characteristic {BATTERY_CHAR_UUID} not found on "
                     f"{self.address}; probed readable characteristics (see log)"
@@ -122,6 +134,37 @@ class UrbanArrowCoordinator(DataUpdateCoordinator[dict[int, int]]):
                     _LOGGER.warning(
                         "PROBE %s %s read failed: %s", self.address, char.uuid, err
                     )
+
+    async def _probe_notifications(self, client: BleakClientWithServiceCache) -> None:
+        """Subscribe to the notify characteristics and log any live telemetry.
+
+        Diagnostic only: the static read of 155e may be a stale buffer, so we
+        listen for a short window in case the module streams readable telemetry
+        (e.g. a battery byte) over notifications.
+        """
+
+        def _on_notify(char: BleakGATTCharacteristic, data: bytearray) -> None:
+            _LOGGER.warning(
+                "NOTIFY %s %s = %s", self.address, char.uuid, bytes(data).hex()
+            )
+
+        subscribed: list[str] = []
+        for uuid in NOTIFY_CHARS:
+            if client.services.get_characteristic(uuid) is None:
+                continue
+            try:
+                await client.start_notify(uuid, _on_notify)
+                subscribed.append(uuid)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("NOTIFY subscribe %s failed: %s", uuid, err)
+
+        if subscribed:
+            await asyncio.sleep(NOTIFY_WINDOW_SECONDS)
+            for uuid in subscribed:
+                try:
+                    await client.stop_notify(uuid)
+                except Exception:  # noqa: BLE001
+                    pass
 
     def _log_services(self, client: BleakClientWithServiceCache) -> None:
         """Dump the GATT services/characteristics to the debug log (once)."""

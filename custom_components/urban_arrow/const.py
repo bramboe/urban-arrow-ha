@@ -19,7 +19,8 @@ DEFAULT_NAME = "Urban Arrow"
 MANUFACTURER = "Urban Arrow"
 
 # How often to wake the bike and read the battery (seconds).
-UPDATE_INTERVAL_SECONDS = 300
+# Temporarily lowered to 90s while reverse-engineering the COMODULE telemetry.
+UPDATE_INTERVAL_SECONDS = 90
 
 # Protobuf field numbers inside the eb21 payload (varint fields only).
 FIELD_ODOMETER_M = 9
