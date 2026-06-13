@@ -88,8 +88,15 @@ DEVICE = {
 }
 
 
-def _on_connect(client, _userdata, _flags, _reason, _properties=None):
+def _on_connect(client, _userdata, _flags, reason, _properties=None):
     """Re-announce availability + discovery on every (re)connect."""
+    rc = getattr(reason, "value", reason)
+    if rc != 0:
+        log.error(
+            "MQTT connection REFUSED (reason=%s) — check MQTT_USER/MQTT_PASS "
+            "and that the Mosquitto login exists", reason
+        )
+        return
     client.publish(AVAIL_TOPIC, "online", retain=True)
     _publish_discovery(client)
     log.info("connected to MQTT %s:%s", MQTT_HOST, MQTT_PORT)
