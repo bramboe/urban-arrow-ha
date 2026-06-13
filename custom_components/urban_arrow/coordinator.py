@@ -71,7 +71,25 @@ class UrbanArrowCoordinator(DataUpdateCoordinator[dict[int, int]]):
                     f"{self.address}; is this the Bosch hub (smart system eBike)?"
                 )
 
-            raw = await client.read_gatt_char(char)
+            # eb21 requires an encrypted link. Ask the proxy to establish
+            # encryption/bonding first. This only succeeds if the bike allows
+            # code-free ("Just Works") pairing; a 12-digit passkey cannot be
+            # entered through an ESP32 proxy.
+            try:
+                await client.pair()
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("pair() failed or unsupported: %s", err)
+
+            try:
+                raw = await client.read_gatt_char(char)
+            except Exception as err:  # noqa: BLE001
+                if "encryption" in str(err).lower() or "authoriz" in str(err).lower():
+                    raise UpdateFailed(
+                        "eb21 needs an encrypted/bonded link that the ESP32 proxy "
+                        "cannot establish (the bike requires its 12-digit pairing "
+                        "code). A bonded reader is needed instead of the proxy."
+                    ) from err
+                raise
             fields = parse_proto_varints(bytes(raw))
             _LOGGER.debug("Urban Arrow %s eb21 fields: %s", self.address, fields)
             return fields
