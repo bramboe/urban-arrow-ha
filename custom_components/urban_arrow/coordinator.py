@@ -71,9 +71,12 @@ class UrbanArrowCoordinator(DataUpdateCoordinator[dict[int, int]]):
 
             char = client.services.get_characteristic(BATTERY_CHAR_UUID)
             if char is None:
+                # Surface the full GATT table in the (ERROR-level) message so we
+                # can see what this peripheral actually exposes without needing
+                # debug logging enabled.
                 raise UpdateFailed(
                     f"Characteristic {BATTERY_CHAR_UUID} not found on "
-                    f"{self.address}; see the debug log for the available services"
+                    f"{self.address}. Available GATT: {self._summarize_services(client)}"
                 )
 
             raw = await client.read_gatt_char(char)
@@ -99,3 +102,15 @@ class UrbanArrowCoordinator(DataUpdateCoordinator[dict[int, int]]):
                 _LOGGER.debug(
                     "  char %s  props=%s", char.uuid, ",".join(char.properties)
                 )
+
+    @staticmethod
+    def _summarize_services(client: BleakClientWithServiceCache) -> str:
+        """Return a compact one-line summary of the GATT table for diagnostics."""
+        parts: list[str] = []
+        for service in client.services:
+            chars = ", ".join(
+                f"{char.uuid}({'/'.join(char.properties)})"
+                for char in service.characteristics
+            )
+            parts.append(f"svc {service.uuid} -> [{chars}]")
+        return " ; ".join(parts) if parts else "(no services discovered)"
