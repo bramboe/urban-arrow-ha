@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """Bosch eBike (Urban Arrow) BLE -> MQTT reader for Home Assistant.
 
-Runs on a Linux host that is already BONDED + trusted with the bike (pair once
-with bluetoothctl). It mimics how the phone stays connected: it CONTINUOUSLY
-tries to connect (so it catches the bike's short advertising window on power-up),
-then HOLDS the connection and subscribes to eb21 notifications for live updates.
-On disconnect it immediately resumes trying. The bond survives reboots, so after
-a server restart this service just reconnects automatically — no re-pairing.
+Use case: you arrive home, park the bike near this host; the battery % is read.
 
-Battery / odometer / last_updated are published to MQTT via HA discovery.
+The host must be BONDED + trusted with the bike (pair once with bluetoothctl).
+The bike advertises connectably for a window while it is on (e.g. right after a
+ride). This service CONTINUOUSLY scans; the moment the bike appears it connects,
+reads the eb21 telemetry snapshot, publishes battery / odometer to MQTT, and
+disconnects again (no held connection). A cooldown prevents re-reading while the
+bike sits parked and advertising. The on-disk bond survives reboots, so no
+re-pairing after a server restart.
 
 Config via environment variables (see the systemd unit):
   BIKE_ADDRESS, MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS,
-  RECONNECT_INTERVAL (s, tight retry while disconnected),
-  REFRESH_INTERVAL (s, re-read eb21 while connected)
+  SCAN_TIMEOUT (s), SCAN_GAP (s between scan cycles), COOLDOWN (s between reads)
 """
 
 from __future__ import annotations
@@ -35,9 +35,9 @@ MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "")
 MQTT_PASS = os.getenv("MQTT_PASS", "")
 
-RECONNECT_INTERVAL = float(os.getenv("RECONNECT_INTERVAL", "3"))
-REFRESH_INTERVAL = float(os.getenv("REFRESH_INTERVAL", "60"))
 SCAN_TIMEOUT = float(os.getenv("SCAN_TIMEOUT", "10"))
+SCAN_GAP = float(os.getenv("SCAN_GAP", "3"))
+COOLDOWN = float(os.getenv("COOLDOWN", "120"))
 
 DISC_PREFIX = "homeassistant"
 NODE = "urban_arrow"
@@ -83,7 +83,6 @@ def parse_varints(data: bytes) -> dict[int, int]:
 
 
 def to_state(fields: dict[int, int]) -> dict | None:
-    """Map eb21 fields to the MQTT state payload (only frames with battery)."""
     if 10 not in fields:
         return None
     out: dict[str, object] = {"battery": fields[10]}
@@ -152,60 +151,40 @@ def make_mqtt() -> mqtt.Client:
 
 
 # -------------------------------------------------------------------- BLE
-def publish_state(mqtt_client: mqtt.Client, raw: bytes) -> None:
+async def read_and_publish(mqtt_client: mqtt.Client, device) -> bool:
+    """Connect, read eb21 once, publish, disconnect. Return True on success."""
+    async with BleakClient(device) as client:
+        raw = bytes(await client.read_gatt_char(EB21))
     state = to_state(parse_varints(raw))
     if state:
         mqtt_client.publish(STATE_TOPIC, json.dumps(state), retain=True)
         log.info("published %s", state)
-
-
-async def hold_connection(mqtt_client: mqtt.Client, client: BleakClient) -> None:
-    """Read once, subscribe to eb21 notifications, and hold until disconnect."""
-    log.info("connected to bike %s — holding connection", ADDRESS)
-
-    def _on_notify(_char, data: bytearray) -> None:
-        publish_state(mqtt_client, bytes(data))
-
-    try:
-        publish_state(mqtt_client, bytes(await client.read_gatt_char(EB21)))
-    except Exception as err:  # noqa: BLE001
-        log.warning("initial read failed: %s", err)
-
-    try:
-        await client.start_notify(EB21, _on_notify)
-        log.info("subscribed to eb21 notifications")
-    except Exception as err:  # noqa: BLE001
-        log.warning("could not subscribe to notifications: %s", err)
-
-    # Hold the link; periodically re-read as a fallback if no notifications arrive.
-    while client.is_connected:
-        await asyncio.sleep(REFRESH_INTERVAL)
-        try:
-            publish_state(mqtt_client, bytes(await client.read_gatt_char(EB21)))
-        except Exception as err:  # noqa: BLE001
-            log.debug("refresh read failed: %s", err)
-            break
+        return True
+    log.warning("read ok but no battery field in payload: %s", raw.hex())
+    return False
 
 
 async def ble_loop(mqtt_client: mqtt.Client) -> None:
-    """Continuously try to connect (catching the bike's advertising window)."""
+    """Continuously scan; on seeing the bike, read once (then cooldown)."""
+    last_ok = 0.0
     while True:
         try:
-            device = await BleakScanner.find_device_by_address(ADDRESS, timeout=SCAN_TIMEOUT)
-            if device is None:
-                await asyncio.sleep(RECONNECT_INTERVAL)
+            if time.time() - last_ok < COOLDOWN:
+                await asyncio.sleep(SCAN_GAP)
                 continue
-            async with BleakClient(device) as client:
-                await hold_connection(mqtt_client, client)
-            log.info("bike disconnected — retrying")
+            device = await BleakScanner.find_device_by_address(ADDRESS, timeout=SCAN_TIMEOUT)
+            if device is not None:
+                log.info("bike seen — connecting to read")
+                if await read_and_publish(mqtt_client, device):
+                    last_ok = time.time()
         except Exception as err:  # noqa: BLE001
-            log.debug("connect attempt failed: %s", err)
-        await asyncio.sleep(RECONNECT_INTERVAL)
+            log.debug("read cycle failed: %s", err)
+        await asyncio.sleep(SCAN_GAP)
 
 
 async def main() -> None:
     mqtt_client = make_mqtt()
-    log.info("reader started for %s (continuous reconnect)", ADDRESS)
+    log.info("reader started for %s (scan-on-arrival, cooldown %ss)", ADDRESS, COOLDOWN)
     try:
         await ble_loop(mqtt_client)
     finally:
