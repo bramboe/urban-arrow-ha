@@ -201,21 +201,37 @@ async def read_via_stream(mqtt_client: mqtt.Client, device) -> bool:
 
 
 async def ble_loop(mqtt_client: mqtt.Client) -> None:
-    """Continuously scan; on seeing the bike, read once (then cooldown)."""
+    """Continuously scan with a persistent scanner; on detection, read once."""
     last_ok = 0.0
-    while True:
-        try:
+    detected: asyncio.Queue = asyncio.Queue()
+
+    def on_detect(device, _adv) -> None:
+        if device.address.upper() == ADDRESS.upper():
+            try:
+                detected.put_nowait(device)
+            except asyncio.QueueFull:
+                pass
+
+    scanner = BleakScanner(detection_callback=on_detect)
+    await scanner.start()
+    log.info("scanning for %s", ADDRESS)
+    try:
+        while True:
+            device = await detected.get()
+            while not detected.empty():  # drain repeats
+                detected.get_nowait()
             if time.time() - last_ok < COOLDOWN:
-                await asyncio.sleep(SCAN_GAP)
                 continue
-            device = await BleakScanner.find_device_by_address(ADDRESS, timeout=SCAN_TIMEOUT)
-            if device is not None:
-                log.info("bike seen — connecting to read")
+            log.info("bike seen — connecting to read")
+            await scanner.stop()
+            try:
                 if await read_via_stream(mqtt_client, device):
                     last_ok = time.time()
-        except Exception as err:  # noqa: BLE001
-            log.warning("read cycle failed: %s", err)
-        await asyncio.sleep(SCAN_GAP)
+            except Exception as err:  # noqa: BLE001
+                log.warning("read cycle failed: %s", err)
+            await scanner.start()
+    finally:
+        await scanner.stop()
 
 
 async def main() -> None:
