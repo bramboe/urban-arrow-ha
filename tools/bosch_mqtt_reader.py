@@ -153,8 +153,11 @@ def make_mqtt() -> mqtt.Client:
 # -------------------------------------------------------------------- BLE
 async def read_and_publish(mqtt_client: mqtt.Client, device) -> bool:
     """Connect, read eb21 once, publish, disconnect. Return True on success."""
-    async with BleakClient(device) as client:
-        raw = bytes(await client.read_gatt_char(EB21))
+    log.info("connecting to %s ...", ADDRESS)
+    async with BleakClient(device, timeout=20.0) as client:
+        log.info("connected, reading eb21 ...")
+        raw = bytes(await asyncio.wait_for(client.read_gatt_char(EB21), timeout=15))
+    log.info("read ok, disconnected")
     state = to_state(parse_varints(raw))
     if state:
         mqtt_client.publish(STATE_TOPIC, json.dumps(state), retain=True)
@@ -178,7 +181,7 @@ async def ble_loop(mqtt_client: mqtt.Client) -> None:
                 if await read_and_publish(mqtt_client, device):
                     last_ok = time.time()
         except Exception as err:  # noqa: BLE001
-            log.debug("read cycle failed: %s", err)
+            log.warning("read cycle failed: %s", err)
         await asyncio.sleep(SCAN_GAP)
 
 
