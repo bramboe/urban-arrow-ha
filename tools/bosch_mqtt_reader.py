@@ -3,20 +3,15 @@
 
 Use case: you arrive home, park the bike near this host; the battery % is read.
 
-This mirrors exactly what the official eBike Flow app does (captured with
-PacketLogger): it reuses the stored bond (no re-pairing), enables notifications
-on the push channel, and subscribes to the battery data stream with a
-write-without-response. Battery values then arrive as notifications. This avoids
-a blocking encrypted read (which can stall) — it is the app's own method.
-
 The host must be BONDED + trusted with the bike (pair once with bluetoothctl).
-It continuously scans; the moment the bike appears it connects, subscribes,
-captures the battery, optionally reads the odometer, then disconnects. A
-cooldown avoids re-reading while parked. The on-disk bond survives reboots.
+It runs a persistent scanner; the moment the bike is detected it connects,
+forces the encrypted link to come up (using the stored bond), reads the eb21
+telemetry snapshot in ONE go (battery + odometer + timestamp), publishes to
+MQTT, and disconnects. A cooldown avoids re-reading while parked. The on-disk
+bond survives reboots, so no re-pairing after a server restart.
 
 Config via environment variables (see the systemd unit):
-  BIKE_ADDRESS, MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS,
-  SCAN_TIMEOUT, SCAN_GAP, COOLDOWN, STREAM_WAIT
+  BIKE_ADDRESS, MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS, COOLDOWN, OP_TIMEOUT
 """
 
 from __future__ import annotations
@@ -31,26 +26,15 @@ import paho.mqtt.client as mqtt
 from bleak import BleakClient, BleakScanner
 
 ADDRESS = os.getenv("BIKE_ADDRESS", "A4:0D:BC:8A:41:D7")
-
-# Bosch push channel (notify) + command channel (write-without-response)
-PUSH_NOTIFY = "00000011-eaa2-11e9-81b4-2a2ae2dbcce4"
-PUSH_CMD = "00000012-eaa2-11e9-81b4-2a2ae2dbcce4"
-SUB_BATTERY = bytes([0x10, 0x02, 0x03, 0x07])  # subscribe to stream 7 (battery)
-EB21 = "0000eb21-eaa2-11e9-81b4-2a2ae2dbcce4"  # snapshot, used only for odometer
-
-# stream-07 battery attribute ids
-ATTR_BATTERY = 0x00BC   # battery 1 SoC
-ATTR_BATTERY2 = 0x00CA  # battery 2 / average SoC
+EB21 = "0000eb21-eaa2-11e9-81b4-2a2ae2dbcce4"
 
 MQTT_HOST = os.getenv("MQTT_HOST", "127.0.0.1")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "")
 MQTT_PASS = os.getenv("MQTT_PASS", "")
 
-SCAN_TIMEOUT = float(os.getenv("SCAN_TIMEOUT", "10"))
-SCAN_GAP = float(os.getenv("SCAN_GAP", "3"))
 COOLDOWN = float(os.getenv("COOLDOWN", "120"))
-STREAM_WAIT = float(os.getenv("STREAM_WAIT", "12"))
+OP_TIMEOUT = float(os.getenv("OP_TIMEOUT", "15"))
 
 DISC_PREFIX = "homeassistant"
 NODE = "urban_arrow"
@@ -59,6 +43,49 @@ STATE_TOPIC = f"{NODE}/state"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("bosch-reader")
+
+
+# ---------------------------------------------------------------- protobuf
+def parse_eb21(raw: bytes) -> dict | None:
+    """Decode eb21: field 9 = odometer (m), 10 = battery %, 11 = unix ts."""
+    fields: dict[int, int] = {}
+    pos = 0
+
+    def rv(d: bytes, p: int) -> tuple[int, int]:
+        result = shift = 0
+        while p < len(d):
+            b = d[p]
+            p += 1
+            result |= (b & 0x7F) << shift
+            if not (b & 0x80):
+                break
+            shift += 7
+        return result, p
+
+    while pos < len(raw):
+        try:
+            tag, pos = rv(raw, pos)
+            fn, wt = tag >> 3, tag & 7
+            if wt == 0:
+                v, pos = rv(raw, pos)
+                fields[fn] = v
+            elif wt == 2:
+                ln, pos = rv(raw, pos)
+                pos += ln
+            else:
+                break
+        except Exception:  # noqa: BLE001
+            break
+    if 10 not in fields:
+        return None
+    out: dict[str, object] = {"battery": fields[10]}
+    if 9 in fields:
+        out["odometer"] = round(fields[9] / 1000, 1)
+    if 11 in fields:
+        out["last_updated"] = time.strftime(
+            "%Y-%m-%dT%H:%M:%S%z", time.localtime(fields[11])
+        )
+    return out
 
 
 # ------------------------------------------------------------------- MQTT
@@ -97,10 +124,9 @@ def _publish_discovery(client: mqtt.Client) -> None:
 
     cfg("battery", "Battery", device_class="battery",
         unit_of_measurement="%", state_class="measurement")
-    cfg("battery2", "Battery 2", device_class="battery",
-        unit_of_measurement="%", state_class="measurement")
     cfg("odometer", "Odometer", device_class="distance",
         unit_of_measurement="km", state_class="total_increasing", icon="mdi:counter")
+    cfg("last_updated", "Last updated", device_class="timestamp")
 
 
 def make_mqtt() -> mqtt.Client:
@@ -117,91 +143,30 @@ def make_mqtt() -> mqtt.Client:
     return client
 
 
-# ----------------------------------------------------------- protobuf (odo)
-def _odometer_km(raw: bytes) -> float | None:
-    """Extract odometer (field 9, meters) from an eb21 snapshot."""
-    fields: dict[int, int] = {}
-    pos = 0
-
-    def rv(d: bytes, p: int) -> tuple[int, int]:
-        result = shift = 0
-        while p < len(d):
-            b = d[p]
-            p += 1
-            result |= (b & 0x7F) << shift
-            if not (b & 0x80):
-                break
-            shift += 7
-        return result, p
-
-    while pos < len(raw):
-        try:
-            tag, pos = rv(raw, pos)
-            fn, wt = tag >> 3, tag & 7
-            if wt == 0:
-                v, pos = rv(raw, pos)
-                fields[fn] = v
-            elif wt == 2:
-                ln, pos = rv(raw, pos)
-                pos += ln
-            else:
-                break
-        except Exception:  # noqa: BLE001
-            break
-    return round(fields[9] / 1000, 1) if 9 in fields else None
-
-
 # -------------------------------------------------------------------- BLE
-async def read_via_stream(mqtt_client: mqtt.Client, device) -> bool:
-    """Connect, subscribe to the battery stream (app method), publish, disconnect."""
-    battery: dict[int, int] = {}
-    got = asyncio.Event()
-
-    def on_notify(_char, data: bytearray) -> None:
-        b = bytes(data)
-        # stream-07 battery frame: 30 07 <attr LE16> <counter 3B> 08 <soc>
-        if len(b) >= 9 and b[0] == 0x30 and b[1] == 0x07 and b[7] == 0x08:
-            attr = b[2] | (b[3] << 8)
-            battery[attr] = b[8]
-            if attr in (ATTR_BATTERY, ATTR_BATTERY2):
-                got.set()
-
+async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
+    """Connect, force encryption, read eb21 once, publish, disconnect."""
     log.info("connecting to %s ...", ADDRESS)
     async with BleakClient(device, timeout=20.0) as client:
-        log.info("connected — subscribing to battery stream")
-        await client.start_notify(PUSH_NOTIFY, on_notify)
-        await client.write_gatt_char(PUSH_CMD, SUB_BATTERY, response=False)
+        # Force the encrypted link up using the stored bond before any secured
+        # read (otherwise BlueZ can stall the first GATT op waiting for it).
         try:
-            await asyncio.wait_for(got.wait(), timeout=STREAM_WAIT)
-        except asyncio.TimeoutError:
-            log.warning("no battery notification within %ss", STREAM_WAIT)
-
-        odometer = None
-        try:
-            raw = bytes(await asyncio.wait_for(client.read_gatt_char(EB21), timeout=8))
-            odometer = _odometer_km(raw)
-        except Exception as err:  # noqa: BLE001
-            log.debug("odometer read skipped: %s", err)
-
-        try:
-            await client.stop_notify(PUSH_NOTIFY)
-        except Exception:  # noqa: BLE001
-            pass
-
-    if not battery:
+            await asyncio.wait_for(client.pair(), timeout=OP_TIMEOUT)
+        except Exception as err:  # noqa: BLE001 - usually "already paired"
+            log.debug("pair(): %s", err)
+        log.info("reading eb21 snapshot ...")
+        raw = bytes(await asyncio.wait_for(client.read_gatt_char(EB21), timeout=OP_TIMEOUT))
+    state = parse_eb21(raw)
+    if state is None:
+        log.warning("read ok but no battery field: %s", raw.hex())
         return False
-    state: dict[str, object] = {"battery": battery.get(ATTR_BATTERY, battery.get(ATTR_BATTERY2))}
-    if ATTR_BATTERY in battery and ATTR_BATTERY2 in battery:
-        state["battery2"] = battery[ATTR_BATTERY2]
-    if odometer is not None:
-        state["odometer"] = odometer
     mqtt_client.publish(STATE_TOPIC, json.dumps(state), retain=True)
     log.info("published %s", state)
     return True
 
 
 async def ble_loop(mqtt_client: mqtt.Client) -> None:
-    """Continuously scan with a persistent scanner; on detection, read once."""
+    """Persistent scanner; on detection, read once (then cooldown)."""
     last_ok = 0.0
     detected: asyncio.Queue = asyncio.Queue()
 
@@ -218,14 +183,14 @@ async def ble_loop(mqtt_client: mqtt.Client) -> None:
     try:
         while True:
             device = await detected.get()
-            while not detected.empty():  # drain repeats
+            while not detected.empty():
                 detected.get_nowait()
             if time.time() - last_ok < COOLDOWN:
                 continue
             log.info("bike seen — connecting to read")
             await scanner.stop()
             try:
-                if await read_via_stream(mqtt_client, device):
+                if await read_snapshot(mqtt_client, device):
                     last_ok = time.time()
             except Exception as err:  # noqa: BLE001
                 log.warning("read cycle failed: %s", err)
@@ -236,7 +201,7 @@ async def ble_loop(mqtt_client: mqtt.Client) -> None:
 
 async def main() -> None:
     mqtt_client = make_mqtt()
-    log.info("reader started for %s (app stream method, cooldown %ss)", ADDRESS, COOLDOWN)
+    log.info("reader started for %s (eb21 snapshot, cooldown %ss)", ADDRESS, COOLDOWN)
     try:
         await ble_loop(mqtt_client)
     finally:
