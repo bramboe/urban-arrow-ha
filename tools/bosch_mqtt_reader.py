@@ -155,7 +155,7 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
             await asyncio.wait_for(client.pair(), timeout=OP_TIMEOUT)
             log.info("link paired/encrypted")
         except Exception as err:  # noqa: BLE001 - often already bonded
-            log.debug("pair(): %s", err)
+            log.info("pair() -> %s: %s", type(err).__name__, err)
 
         log.info("reading eb21 snapshot ...")
         raw: bytes | None = None
@@ -164,7 +164,7 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
                 raw = bytes(await asyncio.wait_for(client.read_gatt_char(EB21), timeout=8))
                 break
             except Exception as err:  # noqa: BLE001
-                log.debug("read attempt %d: %s", attempt + 1, err or type(err).__name__)
+                log.warning("read attempt %d -> %s: %s", attempt + 1, type(err).__name__, err)
                 await asyncio.sleep(2)
         if raw is None:
             log.warning("eb21 read failed after retries")
