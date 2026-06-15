@@ -148,10 +148,27 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
     """Connect, force encryption, read eb21 once, publish, disconnect."""
     log.info("connecting to %s ...", ADDRESS)
     async with BleakClient(device, timeout=20.0) as client:
-        # Services are discovered on connect; the bonded link encrypts on the
-        # first secured read (same as bluetoothctl). No explicit pair() needed.
+        # Force the encrypted link up via the stored bond (a plain read stalls
+        # forever otherwise). pair() briefly resets service discovery, so retry
+        # the read a few times to let the GATT table re-resolve.
+        try:
+            await asyncio.wait_for(client.pair(), timeout=OP_TIMEOUT)
+            log.info("link paired/encrypted")
+        except Exception as err:  # noqa: BLE001 - often already bonded
+            log.debug("pair(): %s", err)
+
         log.info("reading eb21 snapshot ...")
-        raw = bytes(await asyncio.wait_for(client.read_gatt_char(EB21), timeout=OP_TIMEOUT))
+        raw: bytes | None = None
+        for attempt in range(5):
+            try:
+                raw = bytes(await asyncio.wait_for(client.read_gatt_char(EB21), timeout=8))
+                break
+            except Exception as err:  # noqa: BLE001
+                log.debug("read attempt %d: %s", attempt + 1, err or type(err).__name__)
+                await asyncio.sleep(2)
+        if raw is None:
+            log.warning("eb21 read failed after retries")
+            return False
     state = parse_eb21(raw)
     if state is None:
         log.warning("read ok but no battery field: %s", raw.hex())
