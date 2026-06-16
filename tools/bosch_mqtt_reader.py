@@ -148,26 +148,21 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
     """Connect, force encryption, read eb21 once, publish, disconnect."""
     log.info("connecting to %s ...", ADDRESS)
     async with BleakClient(device, timeout=20.0) as client:
-        # Force the encrypted link up via the stored bond (a plain read stalls
-        # forever otherwise). pair() briefly resets service discovery, so retry
-        # the read a few times to let the GATT table re-resolve.
-        try:
-            await asyncio.wait_for(client.pair(), timeout=OP_TIMEOUT)
-            log.info("link paired/encrypted")
-        except Exception as err:  # noqa: BLE001 - often already bonded
-            log.info("pair() -> %s: %s", type(err).__name__, err)
-
+        # Rely on the existing trusted bond: BlueZ encrypts the link on connect,
+        # services resolve, and the read works. No pair() (that tries to
+        # re-authenticate and needs the passkey). A couple of retries cover
+        # transient service-resolution timing right after connect.
         log.info("reading eb21 snapshot ...")
         raw: bytes | None = None
-        for attempt in range(5):
+        for attempt in range(3):
             try:
-                raw = bytes(await asyncio.wait_for(client.read_gatt_char(EB21), timeout=8))
+                raw = bytes(await asyncio.wait_for(client.read_gatt_char(EB21), timeout=10))
                 break
             except Exception as err:  # noqa: BLE001
                 log.warning("read attempt %d -> %s: %s", attempt + 1, type(err).__name__, err)
                 await asyncio.sleep(2)
         if raw is None:
-            log.warning("eb21 read failed after retries")
+            log.warning("eb21 read failed (bond likely missing/untrusted — re-pair via bluetoothctl)")
             return False
     state = parse_eb21(raw)
     if state is None:
