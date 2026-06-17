@@ -2,8 +2,16 @@
 
 Reads the battery percentage of an **Urban Arrow** cargo bike (Bosch Smart
 System hub, BRC3600) over Bluetooth Low Energy and publishes it to Home
-Assistant via MQTT discovery. A device **Urban Arrow** appears with a
-**Battery** sensor and a **Last updated** timestamp.
+Assistant via MQTT discovery. A device **Urban Arrow** appears with these
+entities:
+
+- **Battery** — last measured battery percentage.
+- **Last updated** — when that reading was taken.
+- **Status** — what the add-on is doing right now: searching, *"Not paired —
+  put the bike in PAIRING MODE"*, *"Connected to … — reading"*, or
+  *"Battery NN% read at …"*.
+- **Awake** — on when the bike is advertising (on / in range), off otherwise.
+- **Bluetooth address** — which BLE device was selected (diagnostic).
 
 ## Requirements
 

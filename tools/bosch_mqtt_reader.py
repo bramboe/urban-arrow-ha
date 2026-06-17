@@ -50,6 +50,16 @@ SCAN_GAP = float(os.getenv("SCAN_GAP", "3"))
 DISC_PREFIX = "homeassistant"
 NODE = "urban_arrow"
 STATE_TOPIC = f"{NODE}/state"
+STATUS_TOPIC = f"{NODE}/status"
+
+_mqtt: "mqtt.Client | None" = None
+
+
+def publish_status(status: str, present: str = "ON") -> None:
+    """Publish a human-readable status + present(ON/OFF) for the status sensors."""
+    if _mqtt is not None:
+        _mqtt.publish(STATUS_TOPIC, json.dumps({"status": status, "present": present}),
+                      retain=True)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("bosch-reader")
@@ -127,6 +137,36 @@ def _publish_discovery(client: mqtt.Client) -> None:
         unit_of_measurement="%", state_class="measurement")
     cfg("last_updated", "Last updated", device_class="timestamp")
     cfg("address", "Bluetooth address", icon="mdi:bluetooth", entity_category="diagnostic")
+
+    # Status text sensor (current phase) — reads STATUS_TOPIC, not STATE_TOPIC.
+    client.publish(
+        f"{DISC_PREFIX}/sensor/{NODE}/status/config",
+        json.dumps({
+            "name": "Status",
+            "unique_id": f"{NODE}_status",
+            "state_topic": STATUS_TOPIC,
+            "value_template": "{{ value_json.status }}",
+            "icon": "mdi:bike",
+            "entity_category": "diagnostic",
+            "device": DEVICE,
+        }),
+        retain=True,
+    )
+    # Awake/reachable indicator — on = bike advertising (on/in range), off = not.
+    client.publish(
+        f"{DISC_PREFIX}/binary_sensor/{NODE}/awake/config",
+        json.dumps({
+            "name": "Awake",
+            "unique_id": f"{NODE}_awake",
+            "state_topic": STATUS_TOPIC,
+            "value_template": "{{ value_json.present }}",
+            "payload_on": "ON",
+            "payload_off": "OFF",
+            "device_class": "connectivity",
+            "device": DEVICE,
+        }),
+        retain=True,
+    )
 
     # Remove sensors published by earlier versions.
     for old in ("odometer", "battery2"):
@@ -208,6 +248,7 @@ async def ensure_bonded(address: str) -> bool:
         await _bctl("trust", address, timeout=8)
     else:
         log.warning("not bonded — pairing %s now (bike must be in PAIRING MODE)", address)
+        publish_status("Not paired — put the bike in PAIRING MODE", "ON")
         out = await _bctl_pair(address)
         tail = " | ".join(ln.strip() for ln in out.splitlines()
                           if any(k in ln for k in ("Pair", "pair", "Fail", "Agent", "Bonded", "Error")))
@@ -228,6 +269,7 @@ async def ensure_bonded(address: str) -> bool:
 async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
     """Connect, read eb21, publish battery + address (retained), disconnect."""
     log.info("connecting to %s (%s) ...", device.address, device.name or "?")
+    publish_status(f"Connected to {device.name or 'bike'} — reading…", "ON")
     async with BleakClient(device, timeout=20.0) as client:
         log.info("reading eb21 snapshot ...")
         raw: bytes | None = None
@@ -240,18 +282,22 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
                 await asyncio.sleep(2)
     if raw is None:
         log.warning("eb21 read failed (bond missing/untrusted? re-pair via bluetoothctl)")
+        publish_status("Read failed — bike awake?", "ON")
         return False
     battery = parse_battery(raw)
     if battery is None:
         log.warning("no battery field in payload: %s", raw.hex())
+        publish_status("Read failed — no battery field", "ON")
         return False
+    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     state = {
         "battery": battery,
-        "last_updated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "last_updated": now,
         "address": device.address,
     }
     mqtt_client.publish(STATE_TOPIC, json.dumps(state), retain=True)
     log.info("published %s", state)
+    publish_status(f"Battery {battery}% read at {time.strftime('%Y-%m-%d %H:%M')}", "ON")
     return True
 
 
@@ -290,7 +336,12 @@ async def ble_loop(mqtt_client: mqtt.Client) -> None:
     while True:
         try:
             device = await find_bike(timeout=15.0)
-            if device is not None and time.time() - last_ok >= COOLDOWN:
+            if device is None:
+                publish_status("Bike not found (off or out of range)", "OFF")
+            elif time.time() - last_ok < COOLDOWN:
+                # Seen recently; wait out the cooldown before reading again.
+                publish_status("Bike in range — waiting (cooldown)", "ON")
+            else:
                 log.info("bike seen — connecting to read")
                 if await ensure_bonded(device.address) and await read_snapshot(mqtt_client, device):
                     last_ok = time.time()
@@ -300,10 +351,12 @@ async def ble_loop(mqtt_client: mqtt.Client) -> None:
 
 
 async def main() -> None:
-    mqtt_client = make_mqtt()
+    global _mqtt
+    _mqtt = make_mqtt()
     log.info("reader v1.1 started (%s, cooldown %ss)",
              "auto-detect" if AUTO else ADDRESS, COOLDOWN)
-    await ble_loop(mqtt_client)
+    publish_status("Starting…", "OFF")
+    await ble_loop(_mqtt)
 
 
 if __name__ == "__main__":
