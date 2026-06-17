@@ -45,6 +45,7 @@ MQTT_PASS = os.getenv("MQTT_PASS", "")
 
 COOLDOWN = float(os.getenv("COOLDOWN", "120"))
 OP_TIMEOUT = float(os.getenv("OP_TIMEOUT", "15"))
+SCAN_GAP = float(os.getenv("SCAN_GAP", "3"))
 
 DISC_PREFIX = "homeassistant"
 NODE = "urban_arrow"
@@ -205,15 +206,22 @@ async def ensure_bonded(address: str) -> bool:
     """
     if "Bonded: yes" in await _bctl("info", address, timeout=10):
         await _bctl("trust", address, timeout=8)
-        return True
-    log.warning("not bonded — pairing %s now (bike must be in PAIRING MODE)", address)
-    out = await _bctl_pair(address)
-    tail = " | ".join(ln.strip() for ln in out.splitlines()
-                       if any(k in ln for k in ("Pair", "pair", "Fail", "Agent", "Bonded", "Error")))
-    log.info("pair log: %s", tail[-400:] or "(no relevant output)")
-    bonded = "Bonded: yes" in await _bctl("info", address, timeout=10)
-    log.info("pairing attempt result: bonded=%s", bonded)
-    return bonded
+    else:
+        log.warning("not bonded — pairing %s now (bike must be in PAIRING MODE)", address)
+        out = await _bctl_pair(address)
+        tail = " | ".join(ln.strip() for ln in out.splitlines()
+                          if any(k in ln for k in ("Pair", "pair", "Fail", "Agent", "Bonded", "Error")))
+        log.info("pair log: %s", tail[-400:] or "(no relevant output)")
+        bonded = "Bonded: yes" in await _bctl("info", address, timeout=10)
+        log.info("pairing attempt result: bonded=%s", bonded)
+        if not bonded:
+            return False
+    # Free the single BLE slot so the bleak read gets a clean connection
+    # (the pairing session, or a stale link, otherwise holds the bike connected
+    # and blocks the read — and keeps it from advertising for re-detection).
+    await _bctl("disconnect", address, timeout=8)
+    await asyncio.sleep(1)
+    return True
 
 
 # -------------------------------------------------------------------- BLE
@@ -247,13 +255,14 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
     return True
 
 
-async def ble_loop(mqtt_client: mqtt.Client) -> None:
-    """Persistent scanner; on detection, read once (then cooldown)."""
-    last_ok = 0.0
-    detected: asyncio.Queue = asyncio.Queue()
+async def find_bike(timeout: float = 15.0):
+    """Scan with a FRESH scanner (started+stopped per call, so it can't wedge
+    after a connect) and return the bike's BLEDevice, or None."""
+    found: dict[str, object] = {}
+    ev = asyncio.Event()
     seen: set[str] = set()
 
-    def on_detect(device, adv) -> None:
+    def cb(device, adv) -> None:
         name = device.name or ""
         if AUTO:
             if NAME_MATCH not in name.lower():
@@ -263,32 +272,31 @@ async def ble_loop(mqtt_client: mqtt.Client) -> None:
                 log.info("bike candidate: %s  '%s'  rssi=%s", device.address, name, adv.rssi)
         elif device.address.upper() != ADDRESS.upper():
             return
-        try:
-            detected.put_nowait(device)
-        except asyncio.QueueFull:
-            pass
+        found["device"] = device
+        ev.set()
 
-    scanner = BleakScanner(detection_callback=on_detect)
-    await scanner.start()
-    log.info("scanning (%s)", "auto-detect by name 'smart system eBike'" if AUTO else ADDRESS)
-    try:
-        while True:
-            device = await detected.get()
-            while not detected.empty():
-                detected.get_nowait()
-            if time.time() - last_ok < COOLDOWN:
-                continue
-            log.info("bike seen — connecting to read")
-            await scanner.stop()
-            try:
-                await ensure_bonded(device.address)
-                if await read_snapshot(mqtt_client, device):
+    async with BleakScanner(detection_callback=cb):
+        try:
+            await asyncio.wait_for(ev.wait(), timeout)
+        except asyncio.TimeoutError:
+            pass
+    return found.get("device")
+
+
+async def ble_loop(mqtt_client: mqtt.Client) -> None:
+    """Scan (fresh each cycle); on detection, bond if needed and read once."""
+    last_ok = 0.0
+    log.info("scanning (%s)", "auto-detect 'smart system eBike'" if AUTO else ADDRESS)
+    while True:
+        try:
+            device = await find_bike(timeout=15.0)
+            if device is not None and time.time() - last_ok >= COOLDOWN:
+                log.info("bike seen — connecting to read")
+                if await ensure_bonded(device.address) and await read_snapshot(mqtt_client, device):
                     last_ok = time.time()
-            except Exception as err:  # noqa: BLE001
-                log.warning("read cycle failed: %s", err)
-            await scanner.start()
-    finally:
-        await scanner.stop()
+        except Exception as err:  # noqa: BLE001
+            log.warning("cycle failed: %s", err)
+        await asyncio.sleep(SCAN_GAP)
 
 
 async def main() -> None:
