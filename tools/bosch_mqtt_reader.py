@@ -245,21 +245,24 @@ async def ensure_bonded(address: str) -> bool:
     (bike awake / in pairing mode) without restarting — no missed window.
     """
     if "Bonded: yes" in await _bctl("info", address, timeout=10):
+        # Already bonded: just (re)trust and connect immediately. Do NOT
+        # disconnect here — that only added latency and caused org.bluez
+        # "In Progress" races, and with the bike on only briefly the read
+        # window would close before we got to connect.
         await _bctl("trust", address, timeout=8)
-    else:
-        log.warning("not bonded — pairing %s now (bike must be in PAIRING MODE)", address)
-        publish_status("Not paired — put the bike in PAIRING MODE", "ON")
-        out = await _bctl_pair(address)
-        tail = " | ".join(ln.strip() for ln in out.splitlines()
-                          if any(k in ln for k in ("Pair", "pair", "Fail", "Agent", "Bonded", "Error")))
-        log.info("pair log: %s", tail[-400:] or "(no relevant output)")
-        bonded = "Bonded: yes" in await _bctl("info", address, timeout=10)
-        log.info("pairing attempt result: bonded=%s", bonded)
-        if not bonded:
-            return False
-    # Free the single BLE slot so the bleak read gets a clean connection
-    # (the pairing session, or a stale link, otherwise holds the bike connected
-    # and blocks the read — and keeps it from advertising for re-detection).
+        return True
+    log.warning("not bonded — pairing %s now (bike must be in PAIRING MODE)", address)
+    publish_status("Not paired — put the bike in PAIRING MODE", "ON")
+    out = await _bctl_pair(address)
+    tail = " | ".join(ln.strip() for ln in out.splitlines()
+                      if any(k in ln for k in ("Pair", "pair", "Fail", "Agent", "Bonded", "Error")))
+    log.info("pair log: %s", tail[-400:] or "(no relevant output)")
+    bonded = "Bonded: yes" in await _bctl("info", address, timeout=10)
+    log.info("pairing attempt result: bonded=%s", bonded)
+    if not bonded:
+        return False
+    # The pairing session holds the link open; free the single BLE slot so the
+    # follow-up read gets a clean connection (and the bike advertises again).
     await _bctl("disconnect", address, timeout=8)
     await asyncio.sleep(1)
     return True
@@ -346,7 +349,8 @@ async def ble_loop(mqtt_client: mqtt.Client) -> None:
                 if await ensure_bonded(device.address) and await read_snapshot(mqtt_client, device):
                     last_ok = time.time()
         except Exception as err:  # noqa: BLE001
-            log.warning("cycle failed: %s", err)
+            log.warning("cycle failed: %s: %s", type(err).__name__, err or "(timeout)")
+            publish_status("Connection failed — keep the bike on, retrying…", "ON")
         await asyncio.sleep(SCAN_GAP)
 
 
