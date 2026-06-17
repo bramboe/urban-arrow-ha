@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Urban Arrow (Bosch eBike) battery -> MQTT reader for Home Assistant. v1.
+"""Urban Arrow (Bosch eBike) battery -> MQTT reader for Home Assistant. v1.1.
 
 Use case: you arrive home, park the bike near this host; the battery % is read.
 
@@ -9,13 +9,16 @@ reads the eb21 telemetry snapshot, publishes the battery % to MQTT, and
 disconnects. The value is published RETAINED with no availability topic, so the
 last reading (plus a "last updated" timestamp) stays visible in Home Assistant
 until a new reading arrives — it never goes "unavailable". The on-disk bond
-survives reboots, so no re-pairing after a restart.
+survives reboots.
 
-v1 exposes only the battery and when it was last read. (Odometer / mode /
-motion are separate, still-being-reverse-engineered, and not in v1.)
+Device selection:
+- Set BIKE_ADDRESS to pin a specific bike, OR leave it empty to AUTO-DETECT the
+  Bosch hub by its advertised name ("smart system eBike"). All candidates are
+  logged, and the selected BLE address is published as a diagnostic sensor.
 
-Config via environment variables (see the systemd unit):
-  BIKE_ADDRESS, MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS, COOLDOWN, OP_TIMEOUT
+Config via environment variables (see the add-on / systemd unit):
+  BIKE_ADDRESS (empty = auto), MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS,
+  COOLDOWN, OP_TIMEOUT
 """
 
 from __future__ import annotations
@@ -29,7 +32,9 @@ import time
 import paho.mqtt.client as mqtt
 from bleak import BleakClient, BleakScanner
 
-ADDRESS = os.getenv("BIKE_ADDRESS", "A4:0D:BC:8A:41:D7")
+ADDRESS = os.getenv("BIKE_ADDRESS", "").strip()
+AUTO = ADDRESS == ""
+NAME_MATCH = "smart system"  # Bosch Smart System hub advertised name
 EB21 = "0000eb21-eaa2-11e9-81b4-2a2ae2dbcce4"
 FIELD_BATTERY = 10
 
@@ -120,9 +125,9 @@ def _publish_discovery(client: mqtt.Client) -> None:
     cfg("battery", "Battery", device_class="battery",
         unit_of_measurement="%", state_class="measurement")
     cfg("last_updated", "Last updated", device_class="timestamp")
+    cfg("address", "Bluetooth address", icon="mdi:bluetooth", entity_category="diagnostic")
 
-    # Remove sensors published by earlier versions (clears stale "unavailable"
-    # entities from the broker's retained config topics).
+    # Remove sensors published by earlier versions.
     for old in ("odometer", "battery2"):
         client.publish(f"{DISC_PREFIX}/sensor/{NODE}/{old}/config", "", retain=True)
 
@@ -142,8 +147,8 @@ def make_mqtt() -> mqtt.Client:
 
 # -------------------------------------------------------------------- BLE
 async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
-    """Connect, read eb21, publish battery (retained), disconnect."""
-    log.info("connecting to %s ...", ADDRESS)
+    """Connect, read eb21, publish battery + address (retained), disconnect."""
+    log.info("connecting to %s (%s) ...", device.address, device.name or "?")
     async with BleakClient(device, timeout=20.0) as client:
         log.info("reading eb21 snapshot ...")
         raw: bytes | None = None
@@ -164,6 +169,7 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
     state = {
         "battery": battery,
         "last_updated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "address": device.address,
     }
     mqtt_client.publish(STATE_TOPIC, json.dumps(state), retain=True)
     log.info("published %s", state)
@@ -174,17 +180,26 @@ async def ble_loop(mqtt_client: mqtt.Client) -> None:
     """Persistent scanner; on detection, read once (then cooldown)."""
     last_ok = 0.0
     detected: asyncio.Queue = asyncio.Queue()
+    seen: set[str] = set()
 
-    def on_detect(device, _adv) -> None:
-        if device.address.upper() == ADDRESS.upper():
-            try:
-                detected.put_nowait(device)
-            except asyncio.QueueFull:
-                pass
+    def on_detect(device, adv) -> None:
+        name = device.name or ""
+        if AUTO:
+            if NAME_MATCH not in name.lower():
+                return
+            if device.address not in seen:
+                seen.add(device.address)
+                log.info("bike candidate: %s  '%s'  rssi=%s", device.address, name, adv.rssi)
+        elif device.address.upper() != ADDRESS.upper():
+            return
+        try:
+            detected.put_nowait(device)
+        except asyncio.QueueFull:
+            pass
 
     scanner = BleakScanner(detection_callback=on_detect)
     await scanner.start()
-    log.info("scanning for %s", ADDRESS)
+    log.info("scanning (%s)", "auto-detect by name 'smart system eBike'" if AUTO else ADDRESS)
     try:
         while True:
             device = await detected.get()
@@ -206,7 +221,8 @@ async def ble_loop(mqtt_client: mqtt.Client) -> None:
 
 async def main() -> None:
     mqtt_client = make_mqtt()
-    log.info("reader v1 started for %s (battery only, cooldown %ss)", ADDRESS, COOLDOWN)
+    log.info("reader v1.1 started (%s, cooldown %ss)",
+             "auto-detect" if AUTO else ADDRESS, COOLDOWN)
     await ble_loop(mqtt_client)
 
 

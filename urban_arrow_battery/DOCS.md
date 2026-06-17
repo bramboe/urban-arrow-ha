@@ -23,16 +23,20 @@ BlueZ stack directly, which can bond and read.
 
 ## Setup
 
-1. Find the bike's BLE address. With the bike awake, on the HA host (or via the
-   *Advanced SSH & Web Terminal* add-on):
-   `bluetoothctl --timeout 15 scan on | grep "smart system eBike"`
-2. Set **bike_address** in this add-on's *Configuration* tab.
-3. Put the bike in **pairing mode** (display → connect a new device) and
-   **start the add-on**. It pairs automatically (this bike uses code-free
-   "Just Works" pairing) and trusts the bond — you only do this once.
-4. After that, whenever the bike is on and in range, the battery is read and
+1. Put the bike in **pairing mode** (display → connect a new device) and
+   **start the add-on**. By default `bike_address` is empty, so the add-on
+   **auto-detects** the hub by its name (`smart system eBike`), pairs it
+   automatically (code-free "Just Works" pairing) and trusts the bond — you
+   only do this once.
+2. After that, whenever the bike is on and in range, the battery is read and
    updated in Home Assistant. The last reading stays shown until the next one
    (it never goes "unavailable").
+
+The selected device's BLE address is published as a diagnostic sensor
+**Bluetooth address**, so you can see which bike was picked. If more than one
+"smart system eBike" is in range (e.g. a neighbour), the add-on log lists each
+candidate with its signal strength — set **bike_address** to the right one to
+pin it.
 
 ## Options
 

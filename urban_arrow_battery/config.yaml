@@ -1,5 +1,5 @@
 name: Urban Arrow Battery
-version: "1.0.0"
+version: "1.0.1"
 slug: urban_arrow_battery
 description: >-
   Reads the Urban Arrow (Bosch Smart System) eBike battery over Bluetooth and
@@ -22,7 +22,8 @@ options:
   mqtt_user: ""
   mqtt_pass: ""
 schema:
-  bike_address: str
+  # Leave bike_address empty to auto-detect the hub (advertised "smart system eBike").
+  bike_address: str?
   cooldown: int
   mqtt_host: str?
   mqtt_port: int?
