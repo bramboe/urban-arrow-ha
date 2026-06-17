@@ -145,6 +145,39 @@ def make_mqtt() -> mqtt.Client:
     return client
 
 
+# -------------------------------------------------------------------- bonding
+async def _bctl(*args: str, timeout: float = 20.0) -> str:
+    """Run a bluetoothctl command, return its output (empty on failure)."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "bluetoothctl", *args,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return out.decode(errors="ignore")
+    except Exception as err:  # noqa: BLE001 - bluetoothctl missing/timeout
+        log.debug("bluetoothctl %s: %s", args, err)
+        return ""
+
+
+async def ensure_bonded(address: str) -> bool:
+    """Make sure BlueZ has a trusted bond for the bike (Just Works pairing).
+
+    Runs whenever the bike is detected, so pairing happens at the right moment
+    (bike awake / in pairing mode) without restarting — no missed window.
+    """
+    if "Bonded: yes" in await _bctl("info", address, timeout=10):
+        await _bctl("trust", address, timeout=8)
+        return True
+    log.warning("not bonded — pairing %s now (put the bike in PAIRING MODE)", address)
+    await _bctl("--timeout", "8", "scan", "on", timeout=12)
+    await _bctl("pair", address, timeout=25)
+    await _bctl("trust", address, timeout=8)
+    bonded = "Bonded: yes" in await _bctl("info", address, timeout=10)
+    log.info("pairing attempt result: bonded=%s", bonded)
+    return bonded
+
+
 # -------------------------------------------------------------------- BLE
 async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
     """Connect, read eb21, publish battery + address (retained), disconnect."""
@@ -210,6 +243,7 @@ async def ble_loop(mqtt_client: mqtt.Client) -> None:
             log.info("bike seen — connecting to read")
             await scanner.stop()
             try:
+                await ensure_bonded(device.address)
                 if await read_snapshot(mqtt_client, device):
                     last_ok = time.time()
             except Exception as err:  # noqa: BLE001
