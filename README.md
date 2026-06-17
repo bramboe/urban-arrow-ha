@@ -1,52 +1,55 @@
-# Urban Arrow for Home Assistant
+# Urban Arrow → Home Assistant
 
-A custom integration that exposes an **Urban Arrow** e-bike (Bosch Smart
-System) as a device in Home Assistant. It reads the bike over Bluetooth Low
-Energy through any [ESPHome Bluetooth proxy](https://esphome.io/components/bluetooth_proxy.html)
-in range — no local Bluetooth adapter required.
+Get the battery percentage of an **Urban Arrow** cargo bike (Bosch Smart System
+hub, BRC3600) into Home Assistant. The bike's battery is only served over an
+**encrypted, bonded** BLE link, which Home Assistant's own Bluetooth stack
+(local adapter or ESP proxies) cannot establish — so this uses a small reader
+that bonds with the bike via BlueZ and publishes the battery to MQTT.
 
-## Entities
+The bike appears in HA as a device **Urban Arrow** with a **Battery** sensor and
+a **Last updated** timestamp. The last reading stays shown until the next one
+(never "unavailable").
 
-| Entity | Description |
-|---|---|
-| **Battery** | State of charge (%) |
-| **Odometer** | Total distance (km) |
-| **Last updated** | Measurement timestamp reported by the bike |
-| **Connection status** | Whether the last poll reached the bike |
+## Option A — Home Assistant Add-on (recommended)
+
+For Home Assistant running on hardware with a **working Bluetooth adapter**
+(e.g. HA OS on a Raspberry Pi or bare-metal mini-PC).
+
+1. **Settings → Add-ons → Add-on Store → ⋮ → Repositories** and add:
+   `https://github.com/bramboe/urban-arrow-ha`
+2. Install **Urban Arrow Battery**.
+3. Set `bike_address` in its *Configuration* tab (find it with
+   `bluetoothctl scan on` → `smart system eBike`).
+4. Put the bike in **pairing mode** and **start the add-on** — it pairs
+   automatically (code-free "Just Works") and reads the battery from then on.
+
+See [`urban_arrow_battery/DOCS.md`](urban_arrow_battery/DOCS.md) for details.
+
+## Option B — Standalone reader
+
+For setups where Home Assistant has **no local Bluetooth** (e.g. HA OS in a VM).
+Run the reader on any nearby Linux host that has Bluetooth (for example the
+Proxmox/hypervisor host). See [`tools/`](tools/):
+
+- `bosch_mqtt_reader.py` — the reader (battery → MQTT discovery).
+- `bosch-bike-reader.service` — a systemd unit.
+- `bosch_test_read.py` — one-shot read to verify a bonded link.
+- `comodule_motion_test.py` — experiment for the COMODULE tracker's motion data.
+
+Pair once with `bluetoothctl` (the bike uses Just Works — no code), `trust` it,
+then run the reader. The on-disk bond survives reboots.
 
 ## How it works
 
-Every 5 minutes the integration connects to the bike's **Bosch Smart System
-hub** (it advertises as `smart system eBike`), reads the telemetry
-characteristic `0000eb21-eaa2-11e9-81b4-2a2ae2dbcce4`, decodes the protobuf
-payload (field 10 = battery %, field 9 = odometer, field 11 = timestamp) and
-updates the sensors. No pairing is required for this read. The connection is
-closed again immediately so the bike's single BLE slot stays free for the
-eBike Flow app.
+- Connects to the Bosch hub (`smart system eBike`) over BLE using the host's
+  bonded link.
+- Reads characteristic `0000eb21-eaa2-11e9-81b4-2a2ae2dbcce4` (a protobuf
+  telemetry snapshot) and decodes field 10 = battery %.
+- Publishes battery + a timestamp to MQTT with Home Assistant discovery.
 
-The Bosch hub only advertises and accepts a connection when **both**:
+## Limitations
 
-1. the bike display is **on**, and
-2. **no app** (eBike Flow / Urban Arrow) is connected — Bosch allows only one
-   BLE connection at a time.
-
-When neither holds, the sensors go *unavailable* and refresh on your next ride.
-
-## Installation (HACS)
-
-1. HACS → ⋯ → **Custom repositories** → add `https://github.com/bramboe/urban-arrow-ha` as an *Integration*.
-2. Install **Urban Arrow** and restart Home Assistant.
-3. Turn on the bike's display. It should appear under
-   **Settings → Devices & Services → Discovered**, or add it manually via
-   **+ Add Integration → Urban Arrow**.
-
-## Notes
-
-- Discovery matches the Bosch hub's local name `smart system eBike`.
-- The **COMODULE / `URBANARROW`** module that is always visible is a separate
-  GPS/anti-theft tracker; it does **not** expose the main battery without an
-  (undocumented) authenticated handshake, so this integration does not use it.
-- Bosch hubs use a randomised BLE address. If it changes, Home Assistant
-  re-discovers the bike and you re-add it.
-- For troubleshooting, enable debug logging
-  (`logger` → `custom_components.urban_arrow: debug`).
+- The bike allows **one** BLE connection at a time — the phone app and this
+  reader cannot both be connected.
+- Battery only for now. The odometer, assist mode (Eco/Tour+/Auto/Turbo) and the
+  COMODULE motion sensor are still being reverse-engineered.

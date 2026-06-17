@@ -1,0 +1,30 @@
+name: Urban Arrow Battery
+version: "1.0.0"
+slug: urban_arrow_battery
+description: >-
+  Reads the Urban Arrow (Bosch Smart System) eBike battery over Bluetooth and
+  publishes it to Home Assistant via MQTT discovery.
+url: https://github.com/bramboe/urban-arrow-ha
+arch:
+  - aarch64
+  - amd64
+init: false
+# Access the host BlueZ stack over D-Bus (needed for BLE bonding + reading).
+host_dbus: true
+# Auto-receive the MQTT broker connection details from Home Assistant.
+services:
+  - mqtt:want
+options:
+  bike_address: ""
+  cooldown: 120
+  mqtt_host: ""
+  mqtt_port: 1883
+  mqtt_user: ""
+  mqtt_pass: ""
+schema:
+  bike_address: str
+  cooldown: int
+  mqtt_host: str?
+  mqtt_port: int?
+  mqtt_user: str?
+  mqtt_pass: str?
