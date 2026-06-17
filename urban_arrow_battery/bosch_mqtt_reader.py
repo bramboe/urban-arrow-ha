@@ -160,6 +160,43 @@ async def _bctl(*args: str, timeout: float = 20.0) -> str:
         return ""
 
 
+async def _bctl_pair(address: str) -> str:
+    """Run an interactive bluetoothctl session that registers an agent and
+    pairs (Just Works needs an agent to auto-confirm). Returns the output."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "bluetoothctl",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    except Exception as err:  # noqa: BLE001
+        return f"bluetoothctl unavailable: {err}"
+    seq = [
+        ("power on", 1.0),
+        ("agent KeyboardDisplay", 0.3),
+        ("default-agent", 0.3),
+        ("scan on", 6.0),
+        (f"pair {address}", 12.0),
+        (f"trust {address}", 1.0),
+        ("scan off", 0.3),
+        ("quit", 0.3),
+    ]
+    try:
+        for cmd, delay in seq:
+            proc.stdin.write((cmd + "\n").encode())
+            await proc.stdin.drain()
+            await asyncio.sleep(delay)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        return out.decode(errors="ignore")
+    except asyncio.TimeoutError:
+        proc.kill()
+        return "(bluetoothctl session timed out)"
+
+
 async def ensure_bonded(address: str) -> bool:
     """Make sure BlueZ has a trusted bond for the bike (Just Works pairing).
 
@@ -169,10 +206,11 @@ async def ensure_bonded(address: str) -> bool:
     if "Bonded: yes" in await _bctl("info", address, timeout=10):
         await _bctl("trust", address, timeout=8)
         return True
-    log.warning("not bonded — pairing %s now (put the bike in PAIRING MODE)", address)
-    await _bctl("--timeout", "8", "scan", "on", timeout=12)
-    await _bctl("pair", address, timeout=25)
-    await _bctl("trust", address, timeout=8)
+    log.warning("not bonded — pairing %s now (bike must be in PAIRING MODE)", address)
+    out = await _bctl_pair(address)
+    tail = " | ".join(ln.strip() for ln in out.splitlines()
+                       if any(k in ln for k in ("Pair", "pair", "Fail", "Agent", "Bonded", "Error")))
+    log.info("pair log: %s", tail[-400:] or "(no relevant output)")
     bonded = "Bonded: yes" in await _bctl("info", address, timeout=10)
     log.info("pairing attempt result: bonded=%s", bonded)
     return bonded
