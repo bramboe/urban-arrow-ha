@@ -52,12 +52,20 @@ COOLDOWN = float(os.getenv("COOLDOWN", "120"))
 OP_TIMEOUT = float(os.getenv("OP_TIMEOUT", "15"))
 SCAN_GAP = float(os.getenv("SCAN_GAP", "3"))
 
+# COMODULE (URBANARROW) motion tracker — always-on, own battery.
+COMODULE_ADDRESS = os.getenv("COMODULE_ADDRESS", "").strip()
+COMODULE_NAME = "urbanarrow"
+CHAR_155E = "0000155e-1212-efde-1523-785feabcd123"
+FRAME_MOTION = 0xD1  # 155e frame type that floods while the bike is moved
+MOTION_OFF_DELAY = float(os.getenv("MOTION_OFF_DELAY", "12"))
+
 DISC_PREFIX = "homeassistant"
 NODE = "urban_arrow"
 STATE_TOPIC = f"{NODE}/state"
 STATUS_TOPIC = f"{NODE}/status"
 MODE_TOPIC = f"{NODE}/mode"
 RANGE_TOPIC = f"{NODE}/range"
+MOTION_TOPIC = f"{NODE}/motion"
 
 _mqtt: "mqtt.Client | None" = None
 
@@ -67,6 +75,12 @@ def publish_status(status: str, present: str = "ON") -> None:
     if _mqtt is not None:
         _mqtt.publish(STATUS_TOPIC, json.dumps({"status": status, "present": present}),
                       retain=True)
+
+
+def publish_motion(on: bool) -> None:
+    """Publish the motion binary_sensor state (retained)."""
+    if _mqtt is not None:
+        _mqtt.publish(MOTION_TOPIC, "ON" if on else "OFF", retain=True)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("bosch-reader")
@@ -248,6 +262,22 @@ def _publish_discovery(client: mqtt.Client) -> None:
         }),
         retain=True,
     )
+    # Motion sensor — on while the COMODULE tracker reports movement (anti-theft).
+    client.publish(
+        f"{DISC_PREFIX}/binary_sensor/{NODE}/motion/config",
+        json.dumps({
+            "name": "Motion",
+            "unique_id": f"{NODE}_motion",
+            "state_topic": MOTION_TOPIC,
+            "payload_on": "ON",
+            "payload_off": "OFF",
+            "device_class": "moving",
+            "icon": "mdi:bike-fast",
+            "device": DEVICE,
+        }),
+        retain=True,
+    )
+
     # Awake/reachable indicator — on = bike advertising (on/in range), off = not.
     client.publish(
         f"{DISC_PREFIX}/binary_sensor/{NODE}/awake/config",
@@ -513,50 +543,73 @@ async def ble_loop(mqtt_client: mqtt.Client) -> None:
 
 
 # -------------------------------------------------------------------- COMODULE
-COMODULE_NAME = "urbanarrow"
-CHAR_155E = "0000155e-1212-efde-1523-785feabcd123"
+async def find_comodule(timeout: float = 12.0):
+    """One exclusive scan to locate the URBANARROW tracker (returns BLEDevice)."""
+    found: dict[str, object] = {}
+    ev = asyncio.Event()
 
-
-async def comodule_diag() -> None:
-    """DIAGNOSTIC: find the URBANARROW tracker, log its advertisement (to see if
-    motion is broadcast passively), then connect to 155e and log the 0xC6/0xC8
-    frames so we can characterise motion (move the bike while this runs)."""
-    log.info("COMODULE-DIAG: scanning ~12s for URBANARROW (move the bike!)")
-    cands: dict[str, object] = {}
-
-    def cb(device, adv) -> None:
+    def cb(device, _adv) -> None:
         if COMODULE_NAME in (device.name or "").lower():
-            mfr = {k: v.hex() for k, v in (adv.manufacturer_data or {}).items()}
-            log.info("COMODULE-DIAG: adv %s rssi=%s mfr=%s", device.address, adv.rssi, mfr)
-            cands[device.address] = device
+            found["device"] = device
+            ev.set()
 
-    try:
-        async with BleakScanner(detection_callback=cb):
-            await asyncio.sleep(12)
-        if not cands:
-            log.info("COMODULE-DIAG: no URBANARROW seen")
+    async with BleakScanner(detection_callback=cb):
+        try:
+            await asyncio.wait_for(ev.wait(), timeout)
+        except asyncio.TimeoutError:
+            pass
+    return found.get("device")
+
+
+async def motion_watcher(target) -> None:
+    """Stay connected to the COMODULE tracker and watch 155e for motion.
+
+    The tracker streams 0xD1 frames in a burst while the bike is physically
+    moved (even with the eBike switched off). We publish motion ON on the first
+    0xD1 and OFF after MOTION_OFF_DELAY seconds without one. Reconnects on drop.
+    """
+    state = {"on": False, "last": 0.0}
+
+    def cb(_c, data: bytearray) -> None:
+        if len(data) > 1 and data[1] == FRAME_MOTION:
+            state["last"] = time.time()
+            if not state["on"]:
+                state["on"] = True
+                publish_motion(True)
+                log.info("motion: ON")
+
+    while True:
+        try:
+            async with BleakClient(target, timeout=20.0) as client:
+                await client.start_notify(CHAR_155E, cb)
+                log.info("COMODULE motion watcher connected")
+                while client.is_connected:
+                    await asyncio.sleep(2)
+                    if state["on"] and time.time() - state["last"] > MOTION_OFF_DELAY:
+                        state["on"] = False
+                        publish_motion(False)
+                        log.info("motion: OFF")
+        except Exception as err:  # noqa: BLE001
+            log.warning("motion watcher: %s: %s", type(err).__name__, err)
+        if state["on"]:
+            state["on"] = False
+            publish_motion(False)
+        await asyncio.sleep(5)  # brief backoff before reconnecting
+
+
+async def start_motion(_mqtt_client: mqtt.Client) -> None:
+    """Locate the tracker (configured address or auto-detect) and launch the
+    motion watcher. Runs the locate scan BEFORE ble_loop starts its own scan."""
+    publish_motion(False)
+    target: object | None = COMODULE_ADDRESS or None
+    if target is None:
+        log.info("locating COMODULE (URBANARROW) tracker ...")
+        target = await find_comodule()
+        if target is None:
+            log.warning("COMODULE tracker not found — motion sensor disabled this run")
             return
-        addr = sorted(cands)[0]
-        log.info("COMODULE-DIAG: connecting to %s for 155e", addr)
-        async with BleakClient(cands[addr], timeout=20.0) as client:
-            try:
-                raw = bytes(await client.read_gatt_char(CHAR_155E))
-                log.info("COMODULE-DIAG: 155e read = %s", raw.hex())
-            except Exception as err:  # noqa: BLE001
-                log.info("COMODULE-DIAG: 155e read failed: %s", type(err).__name__)
-
-            def on_155e(_c, data: bytearray) -> None:
-                b = bytes(data)
-                ft = b[1] if len(b) > 1 else 0
-                log.info("COMODULE-DIAG: 155e %s type=0x%02x", b.hex(), ft)
-
-            await client.start_notify(CHAR_155E, on_155e)
-            log.info("COMODULE-DIAG: subscribed 90s — MOVE THE BIKE now")
-            await asyncio.sleep(90)
-            await client.stop_notify(CHAR_155E)
-        log.info("COMODULE-DIAG: done")
-    except Exception as err:  # noqa: BLE001
-        log.warning("COMODULE-DIAG failed: %s: %s", type(err).__name__, err)
+        log.info("COMODULE tracker found: %s", getattr(target, "address", target))
+    asyncio.create_task(motion_watcher(target))
 
 
 async def main() -> None:
@@ -565,10 +618,7 @@ async def main() -> None:
     log.info("reader v1.1 started (%s, cooldown %ss)",
              "auto-detect" if AUTO else ADDRESS, COOLDOWN)
     publish_status("Starting…", "OFF")
-    if os.getenv("COMODULE_DIAG", "0") == "1":
-        # Run first (exclusive scanner) — a second concurrent BleakScanner
-        # collides with ble_loop's scan (org.bluez "Operation already in progress").
-        await comodule_diag()
+    await start_motion(_mqtt)
     await ble_loop(_mqtt)
 
 

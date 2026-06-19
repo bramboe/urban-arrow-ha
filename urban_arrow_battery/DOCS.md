@@ -18,6 +18,10 @@ entities:
 - **Status** — what the add-on is doing right now: searching, *"Not paired —
   put the bike in PAIRING MODE"*, *"Connected to … — reading"*, or
   *"Battery NN% read at …"*.
+- **Motion** — on while the COMODULE (URBANARROW) tracker reports the bike is
+  being moved, even with the eBike switched off. The add-on stays connected to
+  the always-on tracker; great for anti-theft automations / an alarm. Clears
+  after `motion_off_delay` seconds of stillness.
 - **Awake** — on when the bike is advertising (on / in range), off otherwise.
 - **Bluetooth address** — which BLE device was selected (diagnostic).
 
