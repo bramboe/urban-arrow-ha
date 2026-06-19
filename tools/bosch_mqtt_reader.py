@@ -566,7 +566,9 @@ async def main() -> None:
              "auto-detect" if AUTO else ADDRESS, COOLDOWN)
     publish_status("Starting…", "OFF")
     if os.getenv("COMODULE_DIAG", "0") == "1":
-        asyncio.create_task(comodule_diag())
+        # Run first (exclusive scanner) — a second concurrent BleakScanner
+        # collides with ble_loop's scan (org.bluez "Operation already in progress").
+        await comodule_diag()
     await ble_loop(_mqtt)
 
 
