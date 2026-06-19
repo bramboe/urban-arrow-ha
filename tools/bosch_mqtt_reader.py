@@ -405,6 +405,7 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
         log.warning("eb21 read failed (bond missing/untrusted? re-pair via bluetoothctl)")
         publish_status("Read failed — bike awake?", "ON")
         return False
+    log.info("eb21 raw: %s", raw.hex())  # diagnostic: hunt for odometer/service
     battery = parse_battery(raw)
     if battery is None:
         log.warning("no battery field in payload: %s", raw.hex())
