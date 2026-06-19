@@ -337,13 +337,18 @@ async def read_mode(client: BleakClient) -> str | None:
 
     try:
         await client.start_notify(PUSH_NOTIFY, cb)
-        log.info("subscribed to push channel %s; sending stream subscriptions", PUSH_NOTIFY)
-        for sub in range(1, 8):  # 10 02 03 01 .. 07 — the app's stream subscriptions
+        log.info("subscribed to push channel %s; sending mode subscription", PUSH_NOTIFY)
+        # Replayed verbatim from the Bosch app (Flow.pklg): the registration
+        # header, then the ride-mode attribute (9809) subscription. Once 9809 is
+        # subscribed the bike pushes records 30 04 98 09 08 <level>.
+        for cmd in (
+            "1002010310030400f410020301100203021002030310020304100203051002030610020307",
+            "30054180980960",
+        ):
             try:
-                await client.write_gatt_char(PUSH_WRITE, bytes([0x10, 0x02, 0x03, sub]),
-                                              response=False)
+                await client.write_gatt_char(PUSH_WRITE, bytes.fromhex(cmd), response=False)
             except Exception as err:  # noqa: BLE001
-                log.debug("sub %d write failed: %s", sub, err)
+                log.debug("sub write failed: %s", err)
         await asyncio.sleep(6)
         await client.stop_notify(PUSH_NOTIFY)
         log.info("push channel: %d frame(s) received, mode=%s", count["n"], latest["mode"])
