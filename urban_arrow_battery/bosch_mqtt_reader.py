@@ -314,24 +314,31 @@ async def read_mode(client: BleakClient) -> str | None:
     decoded mode. Returns None if nothing arrived (e.g. bike idle).
     """
     latest: dict[str, str | None] = {"mode": None}
+    count = {"n": 0}
 
     def cb(_char, data: bytearray) -> None:
-        m = parse_mode(bytes(data))
+        count["n"] += 1
+        b = bytes(data)
+        if count["n"] <= 10:  # sample the first frames so we can see the framing
+            log.info("push frame %d: %s", count["n"], b.hex())
+        m = parse_mode(b)
         if m:
             latest["mode"] = m
 
     try:
         await client.start_notify(PUSH_NOTIFY, cb)
+        log.info("subscribed to push channel %s; sending stream subscriptions", PUSH_NOTIFY)
         for sub in range(1, 8):  # 10 02 03 01 .. 07 — the app's stream subscriptions
             try:
                 await client.write_gatt_char(PUSH_WRITE, bytes([0x10, 0x02, 0x03, sub]),
                                               response=False)
-            except Exception:  # noqa: BLE001
-                pass
-        await asyncio.sleep(5)
+            except Exception as err:  # noqa: BLE001
+                log.debug("sub %d write failed: %s", sub, err)
+        await asyncio.sleep(6)
         await client.stop_notify(PUSH_NOTIFY)
+        log.info("push channel: %d frame(s) received, mode=%s", count["n"], latest["mode"])
     except Exception as err:  # noqa: BLE001
-        log.debug("mode read failed: %s", err)
+        log.warning("mode read failed: %s: %s", type(err).__name__, err)
     return latest["mode"]
 
 
