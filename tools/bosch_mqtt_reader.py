@@ -271,7 +271,7 @@ def _publish_discovery(client: mqtt.Client) -> None:
             "state_topic": MOTION_TOPIC,
             "payload_on": "ON",
             "payload_off": "OFF",
-            "device_class": "moving",
+            "device_class": "motion",  # HomeKit maps this to a Motion Sensor
             "icon": "mdi:bike-fast",
             "device": DEVICE,
         }),
