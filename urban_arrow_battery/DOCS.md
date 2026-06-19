@@ -7,6 +7,9 @@ entities:
 
 - **Battery** — last measured battery percentage.
 - **Last updated** — when that reading was taken.
+- **Ride mode** — the assist mode selected on the bike (Eco / Tour / Auto /
+  Turbo / Off), captured from the bike's push channel during the read. Shows
+  the last known mode between rides.
 - **Status** — what the add-on is doing right now: searching, *"Not paired —
   put the bike in PAIRING MODE"*, *"Connected to … — reading"*, or
   *"Battery NN% read at …"*.

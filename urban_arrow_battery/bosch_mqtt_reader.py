@@ -38,6 +38,11 @@ NAME_MATCH = "smart system"  # Bosch Smart System hub advertised name
 EB21 = "0000eb21-eaa2-11e9-81b4-2a2ae2dbcce4"
 FIELD_BATTERY = 10
 
+# Bosch push channel: notifications carry the live-selected ride mode.
+PUSH_NOTIFY = "00000011-eaa2-11e9-81b4-2a2ae2dbcce4"
+PUSH_WRITE = "00000012-eaa2-11e9-81b4-2a2ae2dbcce4"
+MODE_NAMES = {1: "Eco", 2: "Tour", 3: "Auto", 4: "Turbo"}
+
 MQTT_HOST = os.getenv("MQTT_HOST", "127.0.0.1")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "")
@@ -51,6 +56,7 @@ DISC_PREFIX = "homeassistant"
 NODE = "urban_arrow"
 STATE_TOPIC = f"{NODE}/state"
 STATUS_TOPIC = f"{NODE}/status"
+MODE_TOPIC = f"{NODE}/mode"
 
 _mqtt: "mqtt.Client | None" = None
 
@@ -99,6 +105,22 @@ def parse_battery(raw: bytes) -> int | None:
     return fields.get(FIELD_BATTERY)
 
 
+def parse_mode(raw: bytes) -> str | None:
+    """Return the ride mode from a Bosch push-channel notification, or None.
+
+    On record:  ... 98 09 08 <level> ...  (level 1=Eco 2=Tour 3=Auto 4=Turbo)
+    Off record: ... 30 02 98 09 ...        (a length-2 record, no level byte)
+    """
+    i = raw.find(b"\x98\x09")
+    while i != -1:
+        if i + 3 < len(raw) and raw[i + 2] == 0x08 and raw[i + 3] in MODE_NAMES:
+            return MODE_NAMES[raw[i + 3]]
+        if i >= 2 and raw[i - 2] == 0x30 and raw[i - 1] == 0x02:
+            return "Off"
+        i = raw.find(b"\x98\x09", i + 2)
+    return None
+
+
 # ------------------------------------------------------------------- MQTT
 DEVICE = {
     "identifiers": [NODE],
@@ -137,6 +159,21 @@ def _publish_discovery(client: mqtt.Client) -> None:
         unit_of_measurement="%", state_class="measurement")
     cfg("last_updated", "Last updated", device_class="timestamp")
     cfg("address", "Bluetooth address", icon="mdi:bluetooth", entity_category="diagnostic")
+
+    # Ride mode sensor — reads MODE_TOPIC (its own retained topic so the last
+    # known mode stays shown between rides).
+    client.publish(
+        f"{DISC_PREFIX}/sensor/{NODE}/mode/config",
+        json.dumps({
+            "name": "Ride mode",
+            "unique_id": f"{NODE}_mode",
+            "state_topic": MODE_TOPIC,
+            "value_template": "{{ value_json.mode }}",
+            "icon": "mdi:speedometer",
+            "device": DEVICE,
+        }),
+        retain=True,
+    )
 
     # Status text sensor (current phase) — reads STATUS_TOPIC, not STATE_TOPIC.
     client.publish(
@@ -269,13 +306,43 @@ async def ensure_bonded(address: str) -> bool:
 
 
 # -------------------------------------------------------------------- BLE
+async def read_mode(client: BleakClient) -> str | None:
+    """Subscribe to the Bosch push channel and capture the live ride mode.
+
+    Best-effort: enables notifications, replays the app's stream subscriptions
+    (so the bike pushes mode frames), listens briefly, and returns the last
+    decoded mode. Returns None if nothing arrived (e.g. bike idle).
+    """
+    latest: dict[str, str | None] = {"mode": None}
+
+    def cb(_char, data: bytearray) -> None:
+        m = parse_mode(bytes(data))
+        if m:
+            latest["mode"] = m
+
+    try:
+        await client.start_notify(PUSH_NOTIFY, cb)
+        for sub in range(1, 8):  # 10 02 03 01 .. 07 — the app's stream subscriptions
+            try:
+                await client.write_gatt_char(PUSH_WRITE, bytes([0x10, 0x02, 0x03, sub]),
+                                              response=False)
+            except Exception:  # noqa: BLE001
+                pass
+        await asyncio.sleep(5)
+        await client.stop_notify(PUSH_NOTIFY)
+    except Exception as err:  # noqa: BLE001
+        log.debug("mode read failed: %s", err)
+    return latest["mode"]
+
+
 async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
-    """Connect, read eb21, publish battery + address (retained), disconnect."""
+    """Connect, read eb21 battery + push-channel ride mode, publish (retained)."""
     log.info("connecting to %s (%s) ...", device.address, device.name or "?")
     publish_status(f"Connected to {device.name or 'bike'} — reading…", "ON")
+    raw: bytes | None = None
+    mode: str | None = None
     async with BleakClient(device, timeout=20.0) as client:
         log.info("reading eb21 snapshot ...")
-        raw: bytes | None = None
         for attempt in range(3):
             try:
                 raw = bytes(await asyncio.wait_for(client.read_gatt_char(EB21), timeout=10))
@@ -283,6 +350,7 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
             except Exception as err:  # noqa: BLE001
                 log.warning("read attempt %d -> %s: %s", attempt + 1, type(err).__name__, err)
                 await asyncio.sleep(2)
+        mode = await read_mode(client)
     if raw is None:
         log.warning("eb21 read failed (bond missing/untrusted? re-pair via bluetoothctl)")
         publish_status("Read failed — bike awake?", "ON")
@@ -300,6 +368,9 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
     }
     mqtt_client.publish(STATE_TOPIC, json.dumps(state), retain=True)
     log.info("published %s", state)
+    if mode is not None:
+        mqtt_client.publish(MODE_TOPIC, json.dumps({"mode": mode}), retain=True)
+        log.info("ride mode: %s", mode)
     publish_status(f"Battery {battery}% read at {time.strftime('%Y-%m-%d %H:%M')}", "ON")
     return True
 
