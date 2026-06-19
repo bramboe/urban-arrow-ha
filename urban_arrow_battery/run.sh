@@ -24,4 +24,5 @@ bashio::log.info "MQTT broker: ${MQTT_HOST}:${MQTT_PORT}"
 # done the moment the bike is seen in pairing mode — no restart needed), reads
 # the battery and publishes to MQTT.
 bashio::log.info "Starting Urban Arrow battery reader (${BIKE_ADDRESS:-auto-detect})"
+export COMODULE_DIAG=1  # TEMP: characterise the URBANARROW motion tracker
 exec python3 /bosch_mqtt_reader.py

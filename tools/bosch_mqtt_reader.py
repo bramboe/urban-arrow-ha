@@ -512,12 +512,61 @@ async def ble_loop(mqtt_client: mqtt.Client) -> None:
         await asyncio.sleep(SCAN_GAP)
 
 
+# -------------------------------------------------------------------- COMODULE
+COMODULE_NAME = "urbanarrow"
+CHAR_155E = "0000155e-1212-efde-1523-785feabcd123"
+
+
+async def comodule_diag() -> None:
+    """DIAGNOSTIC: find the URBANARROW tracker, log its advertisement (to see if
+    motion is broadcast passively), then connect to 155e and log the 0xC6/0xC8
+    frames so we can characterise motion (move the bike while this runs)."""
+    log.info("COMODULE-DIAG: scanning ~12s for URBANARROW (move the bike!)")
+    cands: dict[str, object] = {}
+
+    def cb(device, adv) -> None:
+        if COMODULE_NAME in (device.name or "").lower():
+            mfr = {k: v.hex() for k, v in (adv.manufacturer_data or {}).items()}
+            log.info("COMODULE-DIAG: adv %s rssi=%s mfr=%s", device.address, adv.rssi, mfr)
+            cands[device.address] = device
+
+    try:
+        async with BleakScanner(detection_callback=cb):
+            await asyncio.sleep(12)
+        if not cands:
+            log.info("COMODULE-DIAG: no URBANARROW seen")
+            return
+        addr = sorted(cands)[0]
+        log.info("COMODULE-DIAG: connecting to %s for 155e", addr)
+        async with BleakClient(cands[addr], timeout=20.0) as client:
+            try:
+                raw = bytes(await client.read_gatt_char(CHAR_155E))
+                log.info("COMODULE-DIAG: 155e read = %s", raw.hex())
+            except Exception as err:  # noqa: BLE001
+                log.info("COMODULE-DIAG: 155e read failed: %s", type(err).__name__)
+
+            def on_155e(_c, data: bytearray) -> None:
+                b = bytes(data)
+                ft = b[1] if len(b) > 1 else 0
+                log.info("COMODULE-DIAG: 155e %s type=0x%02x", b.hex(), ft)
+
+            await client.start_notify(CHAR_155E, on_155e)
+            log.info("COMODULE-DIAG: subscribed 90s — MOVE THE BIKE now")
+            await asyncio.sleep(90)
+            await client.stop_notify(CHAR_155E)
+        log.info("COMODULE-DIAG: done")
+    except Exception as err:  # noqa: BLE001
+        log.warning("COMODULE-DIAG failed: %s: %s", type(err).__name__, err)
+
+
 async def main() -> None:
     global _mqtt
     _mqtt = make_mqtt()
     log.info("reader v1.1 started (%s, cooldown %ss)",
              "auto-detect" if AUTO else ADDRESS, COOLDOWN)
     publish_status("Starting…", "OFF")
+    if os.getenv("COMODULE_DIAG", "0") == "1":
+        asyncio.create_task(comodule_diag())
     await ble_loop(_mqtt)
 
 
