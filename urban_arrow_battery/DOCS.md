@@ -10,6 +10,9 @@ entities:
 - **Ride mode** — the assist mode selected on the bike (Eco / Tour / Auto /
   Turbo / Off), captured from the bike's push channel during the read. Shows
   the last known mode between rides.
+- **Range Eco / Tour+ / Auto / Turbo** — the bike's estimated remaining range
+  (km) per assist mode, as the eBike Flow app shows it. Recalculated by the
+  bike from riding style and charge.
 - **Status** — what the add-on is doing right now: searching, *"Not paired —
   put the bike in PAIRING MODE"*, *"Connected to … — reading"*, or
   *"Battery NN% read at …"*.

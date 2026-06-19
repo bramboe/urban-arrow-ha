@@ -57,6 +57,7 @@ NODE = "urban_arrow"
 STATE_TOPIC = f"{NODE}/state"
 STATUS_TOPIC = f"{NODE}/status"
 MODE_TOPIC = f"{NODE}/mode"
+RANGE_TOPIC = f"{NODE}/range"
 
 _mqtt: "mqtt.Client | None" = None
 
@@ -121,6 +122,19 @@ def parse_mode(raw: bytes) -> str | None:
     return None
 
 
+def parse_range(raw: bytes) -> dict[str, int] | None:
+    """Return the estimated range (km) per mode from a push notification.
+
+    Attribute 9857 carries a 4-byte array `98 57 0a 04 <eco><tour><auto><turbo>`
+    (ascending assist order, each a km value).
+    """
+    i = raw.find(b"\x98\x57\x0a\x04")
+    if i != -1 and i + 8 <= len(raw):
+        a = raw[i + 4:i + 8]
+        return {"eco": a[0], "tour": a[1], "auto": a[2], "turbo": a[3]}
+    return None
+
+
 # ------------------------------------------------------------------- MQTT
 DEVICE = {
     "identifiers": [NODE],
@@ -174,6 +188,23 @@ def _publish_discovery(client: mqtt.Client) -> None:
         }),
         retain=True,
     )
+
+    # Estimated range per mode (km) — reads RANGE_TOPIC.
+    for key, label in (("eco", "Range Eco"), ("tour", "Range Tour+"),
+                       ("auto", "Range Auto"), ("turbo", "Range Turbo")):
+        client.publish(
+            f"{DISC_PREFIX}/sensor/{NODE}/range_{key}/config",
+            json.dumps({
+                "name": label,
+                "unique_id": f"{NODE}_range_{key}",
+                "state_topic": RANGE_TOPIC,
+                "value_template": "{{ value_json.%s }}" % key,
+                "unit_of_measurement": "km",
+                "icon": "mdi:map-marker-distance",
+                "device": DEVICE,
+            }),
+            retain=True,
+        )
 
     # Status text sensor (current phase) — reads STATUS_TOPIC, not STATE_TOPIC.
     client.publish(
@@ -306,14 +337,15 @@ async def ensure_bonded(address: str) -> bool:
 
 
 # -------------------------------------------------------------------- BLE
-async def read_mode(client: BleakClient) -> str | None:
-    """Subscribe to the Bosch push channel and capture the live ride mode.
+async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | None]:
+    """Subscribe to the Bosch push channel and capture the live ride mode and
+    the estimated range per mode.
 
     Best-effort: enables notifications, replays the app's stream subscriptions
-    (so the bike pushes mode frames), listens briefly, and returns the last
-    decoded mode. Returns None if nothing arrived (e.g. bike idle).
+    (so the bike pushes the mode (9809) and range (9857) attributes), listens
+    briefly, and returns (mode, ranges). Either may be None if nothing arrived.
     """
-    latest: dict[str, str | None] = {"mode": None}
+    latest: dict[str, object] = {"mode": None, "range": None}
     count = {"n": 0}
 
     def cb(_char, data: bytearray) -> None:
@@ -323,16 +355,21 @@ async def read_mode(client: BleakClient) -> str | None:
         m = parse_mode(b)
         if m:
             latest["mode"] = m
+        r = parse_range(b)
+        if r:
+            latest["range"] = r
 
     try:
         await client.start_notify(PUSH_NOTIFY, cb)
-        log.debug("subscribed to push channel %s; sending mode subscription", PUSH_NOTIFY)
+        log.debug("subscribed to push channel %s; sending subscriptions", PUSH_NOTIFY)
         # Replayed verbatim from the Bosch app (Flow.pklg): the registration
-        # header, then the ride-mode attribute (9809) subscription. Once 9809 is
-        # subscribed the bike pushes records 30 04 98 09 08 <level>.
+        # header, then the ride-mode (9809) and per-mode range (9857) attribute
+        # subscriptions. The bike then pushes 30 04 98 09 08 <level> and
+        # 98 57 0a 04 <eco><tour><auto><turbo>.
         for cmd in (
             "1002010310030400f410020301100203021002030310020304100203051002030610020307",
             "30054180980960",
+            "30054180985760",
         ):
             try:
                 await client.write_gatt_char(PUSH_WRITE, bytes.fromhex(cmd), response=False)
@@ -340,10 +377,11 @@ async def read_mode(client: BleakClient) -> str | None:
                 log.debug("sub write failed: %s", err)
         await asyncio.sleep(6)
         await client.stop_notify(PUSH_NOTIFY)
-        log.debug("push channel: %d frame(s) received, mode=%s", count["n"], latest["mode"])
+        log.debug("push channel: %d frame(s), mode=%s range=%s",
+                  count["n"], latest["mode"], latest["range"])
     except Exception as err:  # noqa: BLE001
-        log.warning("mode read failed: %s: %s", type(err).__name__, err)
-    return latest["mode"]
+        log.warning("push read failed: %s: %s", type(err).__name__, err)
+    return latest["mode"], latest["range"]  # type: ignore[return-value]
 
 
 async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
@@ -352,6 +390,7 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
     publish_status(f"Connected to {device.name or 'bike'} — reading…", "ON")
     raw: bytes | None = None
     mode: str | None = None
+    ranges: dict[str, int] | None = None
     async with BleakClient(device, timeout=20.0) as client:
         log.info("reading eb21 snapshot ...")
         for attempt in range(3):
@@ -361,7 +400,7 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
             except Exception as err:  # noqa: BLE001
                 log.warning("read attempt %d -> %s: %s", attempt + 1, type(err).__name__, err)
                 await asyncio.sleep(2)
-        mode = await read_mode(client)
+        mode, ranges = await read_push(client)
     if raw is None:
         log.warning("eb21 read failed (bond missing/untrusted? re-pair via bluetoothctl)")
         publish_status("Read failed — bike awake?", "ON")
@@ -382,6 +421,9 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
     if mode is not None:
         mqtt_client.publish(MODE_TOPIC, json.dumps({"mode": mode}), retain=True)
         log.info("ride mode: %s", mode)
+    if ranges is not None:
+        mqtt_client.publish(RANGE_TOPIC, json.dumps(ranges), retain=True)
+        log.info("range km: %s", ranges)
     publish_status(f"Battery {battery}% read at {time.strftime('%Y-%m-%d %H:%M')}", "ON")
     return True
 
