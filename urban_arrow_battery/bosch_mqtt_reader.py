@@ -73,9 +73,9 @@ log = logging.getLogger("bosch-reader")
 
 
 # ---------------------------------------------------------------- protobuf
-def parse_battery(raw: bytes) -> int | None:
-    """Return field 10 (battery %) from an eb21 protobuf snapshot."""
-    fields: dict[int, int] = {}
+def _pb_fields(raw: bytes) -> dict[int, object]:
+    """Decode a flat protobuf into {field_number: int | bytes}."""
+    fields: dict[int, object] = {}
     pos = 0
 
     def rv(d: bytes, p: int) -> tuple[int, int]:
@@ -94,16 +94,41 @@ def parse_battery(raw: bytes) -> int | None:
             tag, pos = rv(raw, pos)
             fn, wt = tag >> 3, tag & 7
             if wt == 0:
-                v, pos = rv(raw, pos)
-                fields[fn] = v
+                fields[fn], pos = rv(raw, pos)
             elif wt == 2:
                 ln, pos = rv(raw, pos)
+                fields[fn] = raw[pos:pos + ln]
                 pos += ln
+            elif wt == 5:
+                fields[fn] = int.from_bytes(raw[pos:pos + 4], "little")
+                pos += 4
+            elif wt == 1:
+                fields[fn] = int.from_bytes(raw[pos:pos + 8], "little")
+                pos += 8
             else:
                 break
         except Exception:  # noqa: BLE001
             break
-    return fields.get(FIELD_BATTERY)
+    return fields
+
+
+def parse_eb21(raw: bytes) -> dict[str, int]:
+    """Decode the eb21 snapshot. Known fields:
+      f10 = battery %, f12 = odometer (metres),
+      f20.f2 = odometer at which the next service is due (metres).
+    Returns battery, odometer (km) and next_service (km remaining) when present.
+    """
+    f = _pb_fields(raw)
+    out: dict[str, int] = {}
+    if isinstance(f.get(FIELD_BATTERY), int):
+        out["battery"] = f[FIELD_BATTERY]  # type: ignore[index]
+    odo = f.get(12)
+    if isinstance(odo, int):
+        out["odometer"] = odo // 1000
+        target = _pb_fields(f[20]).get(2) if isinstance(f.get(20), bytes) else None
+        if isinstance(target, int):
+            out["next_service"] = (target - odo) // 1000
+    return out
 
 
 def parse_mode(raw: bytes) -> str | None:
@@ -173,6 +198,9 @@ def _publish_discovery(client: mqtt.Client) -> None:
         unit_of_measurement="%", state_class="measurement")
     cfg("last_updated", "Last updated", device_class="timestamp")
     cfg("address", "Bluetooth address", icon="mdi:bluetooth", entity_category="diagnostic")
+    cfg("odometer", "Odometer", device_class="distance", unit_of_measurement="km",
+        state_class="total_increasing", icon="mdi:counter")
+    cfg("next_service", "Next service in", unit_of_measurement="km", icon="mdi:wrench-clock")
 
     # Ride mode sensor — reads MODE_TOPIC (its own retained topic so the last
     # known mode stays shown between rides).
@@ -405,8 +433,9 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
         log.warning("eb21 read failed (bond missing/untrusted? re-pair via bluetoothctl)")
         publish_status("Read failed — bike awake?", "ON")
         return False
-    log.info("eb21 raw: %s", raw.hex())  # diagnostic: hunt for odometer/service
-    battery = parse_battery(raw)
+    log.debug("eb21 raw: %s", raw.hex())
+    data = parse_eb21(raw)
+    battery = data.get("battery")
     if battery is None:
         log.warning("no battery field in payload: %s", raw.hex())
         publish_status("Read failed — no battery field", "ON")
@@ -417,6 +446,10 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
         "last_updated": now,
         "address": device.address,
     }
+    if "odometer" in data:
+        state["odometer"] = data["odometer"]
+    if "next_service" in data:
+        state["next_service"] = data["next_service"]
     mqtt_client.publish(STATE_TOPIC, json.dumps(state), retain=True)
     log.info("published %s", state)
     if mode is not None:

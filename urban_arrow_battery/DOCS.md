@@ -6,6 +6,8 @@ Assistant via MQTT discovery. A device **Urban Arrow** appears with these
 entities:
 
 - **Battery** — last measured battery percentage.
+- **Odometer** — total distance ridden (km), read from the bike itself.
+- **Next service in** — km remaining until the next service is due.
 - **Last updated** — when that reading was taken.
 - **Ride mode** — the assist mode selected on the bike (Eco / Tour / Auto /
   Turbo / Off), captured from the bike's push channel during the read. Shows
