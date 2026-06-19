@@ -319,25 +319,14 @@ async def read_mode(client: BleakClient) -> str | None:
     def cb(_char, data: bytearray) -> None:
         count["n"] += 1
         b = bytes(data)
-        if count["n"] <= 10:  # sample the first frames so we can see the framing
-            log.info("push frame %d: %s", count["n"], b.hex())
+        log.debug("push frame %d: %s", count["n"], b.hex())
         m = parse_mode(b)
         if m:
             latest["mode"] = m
 
-    # Diagnostic: try a direct read of the assist-mode config characteristics —
-    # if the current mode is readable here we can skip the whole push handshake.
-    for uuid in ("0000eb41-eaa2-11e9-81b4-2a2ae2dbcce4",
-                 "0000eb40-eaa2-11e9-81b4-2a2ae2dbcce4"):
-        try:
-            val = bytes(await asyncio.wait_for(client.read_gatt_char(uuid), timeout=8))
-            log.info("read %s -> %s", uuid[:8], val.hex())
-        except Exception as err:  # noqa: BLE001
-            log.info("read %s failed: %s", uuid[:8], type(err).__name__)
-
     try:
         await client.start_notify(PUSH_NOTIFY, cb)
-        log.info("subscribed to push channel %s; sending mode subscription", PUSH_NOTIFY)
+        log.debug("subscribed to push channel %s; sending mode subscription", PUSH_NOTIFY)
         # Replayed verbatim from the Bosch app (Flow.pklg): the registration
         # header, then the ride-mode attribute (9809) subscription. Once 9809 is
         # subscribed the bike pushes records 30 04 98 09 08 <level>.
@@ -351,7 +340,7 @@ async def read_mode(client: BleakClient) -> str | None:
                 log.debug("sub write failed: %s", err)
         await asyncio.sleep(6)
         await client.stop_notify(PUSH_NOTIFY)
-        log.info("push channel: %d frame(s) received, mode=%s", count["n"], latest["mode"])
+        log.debug("push channel: %d frame(s) received, mode=%s", count["n"], latest["mode"])
     except Exception as err:  # noqa: BLE001
         log.warning("mode read failed: %s: %s", type(err).__name__, err)
     return latest["mode"]
