@@ -325,6 +325,16 @@ async def read_mode(client: BleakClient) -> str | None:
         if m:
             latest["mode"] = m
 
+    # Diagnostic: try a direct read of the assist-mode config characteristics —
+    # if the current mode is readable here we can skip the whole push handshake.
+    for uuid in ("0000eb41-eaa2-11e9-81b4-2a2ae2dbcce4",
+                 "0000eb40-eaa2-11e9-81b4-2a2ae2dbcce4"):
+        try:
+            val = bytes(await asyncio.wait_for(client.read_gatt_char(uuid), timeout=8))
+            log.info("read %s -> %s", uuid[:8], val.hex())
+        except Exception as err:  # noqa: BLE001
+            log.info("read %s failed: %s", uuid[:8], type(err).__name__)
+
     try:
         await client.start_notify(PUSH_NOTIFY, cb)
         log.info("subscribed to push channel %s; sending stream subscriptions", PUSH_NOTIFY)
