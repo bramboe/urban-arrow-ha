@@ -66,8 +66,13 @@ STATUS_TOPIC = f"{NODE}/status"
 MODE_TOPIC = f"{NODE}/mode"
 RANGE_TOPIC = f"{NODE}/range"
 MOTION_TOPIC = f"{NODE}/motion"
+ALARM_STATE_TOPIC = f"{NODE}/alarm/state"
+ALARM_CMD_TOPIC = f"{NODE}/alarm/cmd"
+ARMED_STATES = ("armed_away", "armed_home", "armed_night")
 
 _mqtt: "mqtt.Client | None" = None
+# Alarm state machine (HomeKit Security System via MQTT alarm_control_panel).
+_alarm: dict[str, object] = {"state": "disarmed", "restored": False, "fired": False}
 
 
 def publish_status(status: str, present: str = "ON") -> None:
@@ -81,6 +86,12 @@ def publish_motion(on: bool) -> None:
     """Publish the motion binary_sensor state (retained)."""
     if _mqtt is not None:
         _mqtt.publish(MOTION_TOPIC, "ON" if on else "OFF", retain=True)
+
+
+def publish_alarm(state: str) -> None:
+    """Publish the alarm_control_panel state (retained)."""
+    if _mqtt is not None:
+        _mqtt.publish(ALARM_STATE_TOPIC, state, retain=True)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("bosch-reader")
@@ -189,7 +200,31 @@ def _on_connect(client, _userdata, _flags, reason, _properties=None):
         log.error("MQTT connection REFUSED (reason=%s) — check MQTT_USER/MQTT_PASS", reason)
         return
     _publish_discovery(client)
+    # Alarm: receive HomeKit/HA arm/disarm commands + restore the retained state.
+    client.subscribe(ALARM_CMD_TOPIC)
+    client.subscribe(ALARM_STATE_TOPIC)
     log.info("connected to MQTT %s:%s", MQTT_HOST, MQTT_PORT)
+
+
+def _on_message(_client, _userdata, msg) -> None:
+    try:
+        payload = msg.payload.decode(errors="ignore").strip()
+    except Exception:  # noqa: BLE001
+        return
+    if msg.topic == ALARM_CMD_TOPIC:
+        new = {"DISARM": "disarmed", "ARM_AWAY": "armed_away",
+               "ARM_HOME": "armed_home", "ARM_NIGHT": "armed_night"}.get(payload.upper())
+        if new:
+            _alarm["state"] = new
+            _alarm["fired"] = False  # allow a fresh trigger after (re)arm/disarm
+            publish_alarm(new)
+            log.info("alarm command %s -> %s", payload, new)
+    elif msg.topic == ALARM_STATE_TOPIC and not _alarm["restored"]:
+        # First retained message after (re)connect = restore the previous state.
+        _alarm["restored"] = True
+        if payload in ARMED_STATES + ("disarmed", "triggered"):
+            _alarm["state"] = payload
+            log.info("alarm state restored: %s", payload)
 
 
 def _publish_discovery(client: mqtt.Client) -> None:
@@ -247,6 +282,21 @@ def _publish_discovery(client: mqtt.Client) -> None:
             }),
             retain=True,
         )
+
+    # Alarm panel — HomeKit Security System (arm/disarm; "triggered" on motion).
+    client.publish(
+        f"{DISC_PREFIX}/alarm_control_panel/{NODE}/alarm/config",
+        json.dumps({
+            "name": "Alarm",
+            "unique_id": f"{NODE}_alarm",
+            "state_topic": ALARM_STATE_TOPIC,
+            "command_topic": ALARM_CMD_TOPIC,
+            "supported_features": ["arm_away", "arm_home", "arm_night"],
+            "icon": "mdi:shield-bike",
+            "device": DEVICE,
+        }),
+        retain=True,
+    )
 
     # Status text sensor (current phase) — reads STATUS_TOPIC, not STATE_TOPIC.
     client.publish(
@@ -307,6 +357,7 @@ def make_mqtt() -> mqtt.Client:
     if MQTT_USER:
         client.username_pw_set(MQTT_USER, MQTT_PASS)
     client.on_connect = _on_connect
+    client.on_message = _on_message
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
     client.loop_start()
     return client
@@ -568,13 +619,15 @@ async def motion_watcher(target) -> None:
     moved (even with the eBike switched off). We publish motion ON on the first
     0xD1 and OFF after MOTION_OFF_DELAY seconds without one. Reconnects on drop.
     """
-    state = {"on": False, "last": 0.0}
+    state = {"on": False, "last": 0.0, "since": 0.0}
 
     def cb(_c, data: bytearray) -> None:
         if len(data) > 1 and data[1] == FRAME_MOTION:
-            state["last"] = time.time()
+            now = time.time()
+            state["last"] = now
             if not state["on"]:
                 state["on"] = True
+                state["since"] = now
                 publish_motion(True)
                 log.info("motion: ON")
 
@@ -584,11 +637,21 @@ async def motion_watcher(target) -> None:
                 await client.start_notify(CHAR_155E, cb)
                 log.info("COMODULE motion watcher connected")
                 while client.is_connected:
-                    await asyncio.sleep(2)
-                    if state["on"] and time.time() - state["last"] > MOTION_OFF_DELAY:
+                    await asyncio.sleep(1)
+                    now = time.time()
+                    if state["on"] and now - state["last"] > MOTION_OFF_DELAY:
                         state["on"] = False
                         publish_motion(False)
+                        _alarm["fired"] = False  # let the next movement trigger again
                         log.info("motion: OFF")
+                    # Trip the alarm on sustained movement (~3s) while armed.
+                    if (state["on"] and not _alarm["fired"]
+                            and _alarm["state"] in ARMED_STATES
+                            and now - state["since"] >= 3):
+                        _alarm["fired"] = True
+                        _alarm["state"] = "triggered"
+                        publish_alarm("triggered")
+                        log.info("alarm TRIGGERED by motion")
         except Exception as err:  # noqa: BLE001
             log.warning("motion watcher: %s: %s", type(err).__name__, err)
         if state["on"]:
@@ -618,6 +681,10 @@ async def main() -> None:
     log.info("reader v1.1 started (%s, cooldown %ss)",
              "auto-detect" if AUTO else ADDRESS, COOLDOWN)
     publish_status("Starting…", "OFF")
+    # Give the retained alarm state a moment to restore, then assert it so the
+    # panel always has a value (defaults to disarmed on a first-ever run).
+    await asyncio.sleep(2)
+    publish_alarm(_alarm["state"])  # type: ignore[arg-type]
     await start_motion(_mqtt)
     await ble_loop(_mqtt)
 

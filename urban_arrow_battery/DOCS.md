@@ -22,6 +22,9 @@ entities:
   being moved, even with the eBike switched off. The add-on stays connected to
   the always-on tracker; great for anti-theft automations / an alarm. Clears
   after `motion_off_delay` seconds of stillness.
+- **Alarm** — an `alarm_control_panel` (exposed to Apple HomeKit as a **Security
+  System**). Arm it (away/home/night) from HomeKit or Home Assistant; sustained
+  movement while armed sets it to **triggered**. Disarm to clear.
 - **Awake** — on when the bike is advertising (on / in range), off otherwise.
 - **Bluetooth address** — which BLE device was selected (diagnostic).
 
