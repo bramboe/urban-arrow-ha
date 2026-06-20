@@ -847,13 +847,13 @@ INDEX_HTML = """<!doctype html><html><head><meta charset=utf-8>
 :root{--ink:#1b1b1f;--mut:#787884;--line:#eceef2;--acc:#03a9f4}
 *{box-sizing:border-box}
 body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:#f1f2f5;color:var(--ink);line-height:1.45}
-.wrap{max-width:960px;margin:0 auto;padding:22px 20px 48px}
+.wrap{max-width:none;margin:0 auto;padding:22px 22px 48px}
 .tabs{display:flex;gap:8px;margin:2px 0 22px;max-width:380px}
 .tab{flex:1;background:#e6e7ea;color:#555;border:0;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer}
 .tab.on{background:var(--ink);color:#fff}
 .dash{display:grid;gap:20px;grid-template-columns:1fr}
 @media(min-width:720px){.dash{grid-template-columns:1.55fr 1fr;align-items:start}
- .hero{grid-column:1/-1}.col-wide{grid-column:1}.col-rail{grid-column:2}}
+ .col-wide{grid-column:1}.col-rail{grid-column:2;grid-row:1 / span 6}}
 .rail{display:flex;flex-direction:column;gap:20px}
 .card{background:#fff;border-radius:22px;padding:24px;box-shadow:0 2px 8px rgba(20,20,40,.05)}
 .set .card{margin-bottom:18px}
@@ -895,7 +895,7 @@ button.sec{background:#e9eaee;color:#222}button:disabled{opacity:.5;cursor:defau
 </div>
 
 <section id=dash class=dash>
-  <div class='card hero'>
+  <div class='card hero col-wide'>
     <div class=htitle id=bikeTitle>Urban Arrow</div>
     <span class=badge id=conn>—</span>
     <div class=sub id=updated></div>
