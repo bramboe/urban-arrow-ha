@@ -939,22 +939,7 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
     <span class=badge id=conn>—</span>
     <div class=sub id=updated></div>
     <div class=bikewrap>
-      <svg class=bike viewBox='0 0 320 150' fill=none>
-        <!-- wheels (rear 26in, front 20in) -->
-        <circle cx=66 cy=114 r=30 fill=#17181a /><circle cx=66 cy=114 r=17 fill=none stroke=#c7ccd4 stroke-width=3 /><circle cx=66 cy=114 r=4 fill=#c7ccd4 />
-        <circle cx=268 cy=118 r=24 fill=#17181a /><circle cx=268 cy=118 r=13 fill=none stroke=#c7ccd4 stroke-width=3 /><circle cx=268 cy=118 r=4 fill=#c7ccd4 />
-        <!-- cargo box (Family): tall at the back, sloping down to the front -->
-        <path d='M112 114 L121 46 L198 42 L216 114 Z' fill=#202024 />
-        <path d='M122 52 L197 48' stroke=#3a3b40 stroke-width=3 stroke-linecap=round />
-        <rect x=150 y=78 width=44 height=8 rx=2 fill=#4a4c54 />
-        <!-- frame, seat, bars -->
-        <g stroke=#202024 stroke-width=7 stroke-linecap=round stroke-linejoin=round>
-          <path d='M66 114 L216 114 L268 118' />
-          <path d='M216 114 L248 60' /><path d='M248 60 L238 52 M248 60 L260 54' />
-          <path d='M98 114 L90 58 L106 58' />
-        </g>
-        <circle cx=98 cy=114 r=8 fill=#202024 />
-      </svg>
+      <img class=bike src="bike.png" alt="Urban Arrow Family" />
     </div>
     <div class=hstats>
       <div style='display:flex;align-items:center;gap:10px'><div class=segs id=segs></div><div class=pct id=pct>—<small>%</small></div></div>
@@ -1150,6 +1135,7 @@ async def start_web() -> None:
     app = web.Application()
     app.add_routes([
         web.get("/", lambda r: web.Response(text=INDEX_HTML, content_type="text/html")),
+        web.get("/bike.png", lambda r: web.FileResponse("/bike.png")),
         web.get("/api/status", _ui_status),
         web.post("/api/scan", _ui_scan),
         web.post("/api/select_bike", _ui_select_bike),
