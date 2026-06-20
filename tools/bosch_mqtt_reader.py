@@ -851,11 +851,10 @@ body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:#f1f2f5;
 .tabs{display:flex;gap:8px;margin:2px 0 22px;max-width:380px}
 .tab{flex:1;background:#e6e7ea;color:#555;border:0;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer}
 .tab.on{background:var(--ink);color:#fff}
-.dash{display:grid;gap:20px;grid-template-columns:1fr;align-items:start}
-@media(min-width:620px){.dash{grid-template-columns:1fr 1fr}}
-@media(min-width:1000px){.dash{grid-template-columns:1fr 1fr 1fr}}
-.span-all{grid-column:1/-1}
-@media(min-width:620px){.span-2{grid-column:span 2}}
+.dash{display:grid;gap:20px;grid-template-columns:1fr}
+@media(min-width:720px){.dash{grid-template-columns:1.55fr 1fr;align-items:start}
+ .col-wide{grid-column:1}.col-rail{grid-column:2;grid-row:1 / span 6}}
+.rail{display:flex;flex-direction:column;gap:20px}
 .card{background:#fff;border-radius:22px;padding:24px;box-shadow:0 2px 8px rgba(20,20,40,.05)}
 .set .card{margin-bottom:18px}
 .hero{text-align:center;padding:30px 24px 26px}
@@ -896,7 +895,7 @@ button.sec{background:#e9eaee;color:#222}button:disabled{opacity:.5;cursor:defau
 </div>
 
 <section id=dash class=dash>
-  <div class='card hero span-all'>
+  <div class='card hero col-wide'>
     <div class=htitle id=bikeTitle>Urban Arrow</div>
     <span class=badge id=conn>—</span>
     <div class=sub id=updated></div>
@@ -919,17 +918,17 @@ button.sec{background:#e9eaee;color:#222}button:disabled{opacity:.5;cursor:defau
     </div>
   </div>
 
-  <div class=card><div class=lbl>Rijmodus</div><div class=between><div class=big id=mode>—</div><span class=pill id=modePill></span></div></div>
+  <div class='rail col-rail'>
+    <div class=card><div class=lbl>Rijmodus</div><div class=between><div class=big id=mode>—</div><span class=pill id=modePill></span></div></div>
+    <div class=card><div class=lbl>Onderhoud</div><div class=big id=service>—</div><div class=sub>tot de volgende servicebeurt</div></div>
+    <div class=card><div class=lbl>Beveiliging</div><div id=secLine class=big>—</div>
+      <div class=armbtns id=armBox></div></div>
+  </div>
 
-  <div class=card><div class=lbl>Onderhoud</div><div class=big id=service>—</div><div class=sub>tot de volgende servicebeurt</div></div>
-
-  <div class=card><div class=lbl>Beveiliging</div><div id=secLine class=big>—</div>
-    <div class=armbtns id=armBox></div></div>
-
-  <div class='card span-2'><div class=lbl>Geschat bereik per stand</div>
+  <div class='card col-wide'><div class=lbl>Geschat bereik per stand</div>
     <div class=g4 id=ranges></div><div class=cbar id=rangeBar></div></div>
 
-  <div class=card><div class=lbl>Kilometerstand</div><div class=big id=odo>—</div></div>
+  <div class='card col-wide'><div class=lbl>Kilometerstand</div><div class=big id=odo>—</div></div>
 </section>
 
 <section id=set class='set hidden'>
