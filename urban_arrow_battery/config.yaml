@@ -1,5 +1,5 @@
 name: Urban Arrow Battery
-version: "2.5.2"
+version: "2.6.0"
 slug: urban_arrow_battery
 description: >-
   Reads the Urban Arrow (Bosch Smart System) eBike battery over Bluetooth and
@@ -24,6 +24,7 @@ options:
   cooldown: 120
   comodule_address: ""
   motion_off_delay: 12
+  tracker_always_on: false
   mqtt_host: ""
   mqtt_port: 1883
   mqtt_user: ""
@@ -36,6 +37,9 @@ schema:
   # stillness before motion clears.
   comodule_address: str?
   motion_off_delay: int?
+  # Keep the tracker connected always (live motion when disarmed too). Default
+  # off = only while armed, to save the tracker's own battery.
+  tracker_always_on: bool?
   mqtt_host: str?
   mqtt_port: int?
   mqtt_user: str?

@@ -26,6 +26,8 @@ bashio::log.info "MQTT broker: ${MQTT_HOST}:${MQTT_PORT}"
 # COMODULE (URBANARROW) motion tracker — empty address = auto-detect by name.
 export COMODULE_ADDRESS="$(bashio::config 'comodule_address')"
 export MOTION_OFF_DELAY="$(bashio::config 'motion_off_delay')"
+# Battery-friendly: keep the tracker connected only while armed (default).
+if bashio::config.true 'tracker_always_on'; then export TRACKER_ALWAYS=1; else export TRACKER_ALWAYS=0; fi
 
 bashio::log.info "Starting Urban Arrow battery reader (${BIKE_ADDRESS:-auto-detect})"
 exec python3 /bosch_mqtt_reader.py

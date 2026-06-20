@@ -125,6 +125,10 @@ _tracker_mac: "str | None" = (_cfg0.get("tracker") or COMODULE_ADDRESS or "").st
 _tracker_off: bool = bool(_cfg0.get("tracker_off", False))
 # Alarm (HomeKit Security System) is optional on top of the motion sensor.
 _alarm_off: bool = bool(_cfg0.get("alarm_off", False))
+# Battery-friendly: only hold the tracker connection while the alarm is armed
+# (it has its own battery; a permanent connection drains it). Set true to keep
+# it connected always (live motion even when disarmed).
+_tracker_always: bool = os.getenv("TRACKER_ALWAYS", "0") == "1"
 
 # Devices seen during scans, for the setup UI: address -> {name,rssi,kind,module_mac,ts}.
 _discovered: dict[str, dict] = {}
@@ -157,6 +161,16 @@ def publish_alarm(state: str) -> None:
     _last["alarm"] = state
     if _mqtt is not None:
         _mqtt.publish(ALARM_STATE_TOPIC, state, retain=True)
+
+
+def _want_tracker() -> bool:
+    """Whether to hold the tracker connection now. Battery-friendly: only while
+    armed, unless tracker_always is set (and never if the tracker is disabled)."""
+    if _tracker_off:
+        return False
+    if _tracker_always:
+        return True
+    return not _alarm_off and _alarm["state"] in (ARMED_STATES + ("triggered",))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("bosch-reader")
@@ -833,19 +847,25 @@ async def motion_watcher() -> None:
                 log.info("motion: ON")
 
     while True:
-        if _tracker_off:
-            await asyncio.sleep(10)
+        if not _want_tracker():
+            # Disarmed (or disabled): let the tracker sleep to save its battery.
+            if state["on"]:
+                state["on"] = False
+                publish_motion(False)
+                _last["motion"] = False
+            _last["tracker_connected"] = False
+            await asyncio.sleep(4)
             continue
         target = await find_comodule()
         if target is None:
-            await asyncio.sleep(10)
+            await asyncio.sleep(8)
             continue
         try:
             async with BleakClient(target, timeout=20.0) as client:
                 await client.start_notify(CHAR_155E, cb)
                 log.info("COMODULE motion watcher connected (%s)", target.address)
                 _last["tracker_connected"] = True
-                while client.is_connected and not _tracker_off:
+                while client.is_connected and _want_tracker():
                     await asyncio.sleep(1)
                     now = time.time()
                     if state["on"] and now - state["last"] > MOTION_OFF_DELAY:

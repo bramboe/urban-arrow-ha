@@ -15,6 +15,12 @@ configuration:
   motion_off_delay:
     name: Beweging-uit vertraging (seconden)
     description: Aantal seconden stilstand voordat de bewegingssensor uit gaat.
+  tracker_always_on:
+    name: Tracker altijd verbonden houden
+    description: >-
+      Uit (standaard) spaart de eigen accu van de tracker door alleen te
+      verbinden wanneer het alarm scherp staat. Aan = live beweging, ook
+      wanneer disarmed.
   mqtt_host:
     name: MQTT-host
     description: Optionele MQTT-broker override. Leeg laten om de Mosquitto add-on te gebruiken.

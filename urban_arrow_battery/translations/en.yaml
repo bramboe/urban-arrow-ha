@@ -15,6 +15,11 @@ configuration:
   motion_off_delay:
     name: Motion clear delay (seconds)
     description: Seconds of stillness before the motion sensor turns off.
+  tracker_always_on:
+    name: Keep tracker connected always
+    description: >-
+      Off (default) saves the tracker's own battery by connecting only while the
+      alarm is armed. Turn on for live motion even when disarmed.
   mqtt_host:
     name: MQTT host
     description: Optional MQTT broker override. Leave empty to use the Mosquitto add-on.
