@@ -859,8 +859,8 @@ let pick={bike:null,tracker:null};
 const $=s=>document.querySelector(s);
 const api=async(p,o)=>(await fetch(p,o)).json();
 const fmt=d=>`${d.address} · ${d.rssi} dBm`+(d.module_mac?` · ${d.module_mac}`:'');
-async function refresh(){const s=await api('api/status');const L=s.last||{};const di=L.device_info||{};
-  const bikeName=di.model?`${di.manufacturer||'Bosch'} ${di.model}`:(di.name||'gekoppeld');
+async function refresh(){const s=await api('api/status');const L=s.last||{};const di=L.device_info||{};const dev=s.device||{};
+  const bikeName=`${di.manufacturer||dev.manufacturer||'Bosch'} — ${di.model||dev.model||'Smart System'}`+(di.serial?` <span class=muted>· ${di.serial}</span>`:'');
   $('#status').innerHTML=[
    `<span class=kv>🔋 ${L.battery??'?'}%</span>`,
    `<span class=kv>⚙️ ${L.mode??'?'}</span>`,
@@ -895,7 +895,10 @@ refresh();setInterval(refresh,5000);
 async def _ui_status(_request):
     return web.json_response({"bike": _bike_addr, "locked": _locked_addr,
                               "tracker": _tracker_mac, "tracker_off": _tracker_off,
-                              "alarm_off": _alarm_off, "last": _last})
+                              "alarm_off": _alarm_off,
+                              "device": {"manufacturer": DEVICE["manufacturer"],
+                                         "model": DEVICE["model"]},
+                              "last": _last})
 
 
 async def _ui_set_alarm(request):
