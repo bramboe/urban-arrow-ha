@@ -819,69 +819,155 @@ async def start_motion(_mqtt_client: mqtt.Client) -> None:
 
 # ------------------------------------------------------------- setup UI (Ingress)
 INDEX_HTML = """<!doctype html><html><head><meta charset=utf-8>
-<meta name=viewport content="width=device-width,initial-scale=1"><title>Urban Arrow</title>
+<meta name=viewport content='width=device-width,initial-scale=1'><title>Urban Arrow</title>
 <style>
-body{font-family:system-ui,sans-serif;margin:0;padding:16px;background:#f5f5f7;color:#111}
-.card{background:#fff;border-radius:12px;padding:16px;margin:0 0 16px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
-h1{font-size:20px;margin:0 0 14px}h2{font-size:16px;margin:0 0 6px}
-.muted{color:#666;font-size:13px}
-button{background:#03a9f4;color:#fff;border:0;border-radius:8px;padding:9px 14px;font-size:14px;cursor:pointer;margin:4px 4px 0 0}
-button.sec{background:#e0e0e0;color:#222}button:disabled{opacity:.5;cursor:default}
-.row{display:flex;align-items:center;gap:8px;padding:9px;border:1px solid #eee;border-radius:8px;margin:6px 0;cursor:pointer}
-.row.sel{border-color:#03a9f4;background:#e8f6fe}
-.ok{color:#2e7d32;font-weight:600}.bad{color:#c62828;font-weight:600}
-.bar{display:flex;gap:16px;flex-wrap:wrap}.kv{font-size:14px}.hidden{display:none}
-</style></head><body>
-<h1>🚲 Urban Arrow</h1>
-<div class=card><h2>Status</h2><div class=bar id=status><span class=muted>laden…</span></div></div>
-<div class=card>
-  <h2>1. Fiets</h2><p class=muted>Zet het display van de fiets aan en scan.</p>
-  <button onclick="scan('bike')">Scan fietsen</button><div id=bikes></div>
-  <div id=bikeActions class=hidden><button onclick="selectBike()">Selecteer deze fiets</button></div>
-  <div id=pairBox class=hidden style="margin-top:8px">
-    <p class=muted>Zet de fiets in <b>pairing mode</b> (display → nieuw apparaat koppelen), klik dan:</p>
-    <button id=pairBtn onclick="pair()">Koppel (pair)</button><span id=pairMsg></span></div>
+:root{--ink:#1b1b1f;--mut:#70707a;--line:#ececf0;--acc:#03a9f4}
+*{box-sizing:border-box}
+body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:#f2f3f5;color:var(--ink)}
+.wrap{max-width:520px;margin:0 auto;padding:12px 14px 28px}
+.tabs{display:flex;gap:6px;margin:4px 0 14px}
+.tab{flex:1;background:#e6e7ea;color:#444;border:0;border-radius:10px;padding:10px;font-size:14px;font-weight:600;cursor:pointer}
+.tab.on{background:var(--ink);color:#fff}
+.card{background:#fff;border-radius:18px;padding:16px;margin:0 0 12px;box-shadow:0 1px 3px rgba(0,0,0,.07)}
+.hero{background:linear-gradient(180deg,#fff, #f6f8fb);text-align:center}
+.htitle{font-size:18px;font-weight:700;margin-top:2px}
+.badge{display:inline-block;font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px;background:#e6e7ea;color:#555;margin-top:6px}
+.badge.on{background:#e3f5e8;color:#1f7a37}
+.sub{color:var(--mut);font-size:12px;margin-top:4px}
+.bike{margin:6px auto 2px;display:block}
+.hstats{display:flex;justify-content:center;align-items:center;gap:24px;margin-top:6px}
+.segs{display:flex;gap:3px;align-items:flex-end;height:26px}
+.segs i{width:7px;border-radius:2px;display:block}
+.segs i:nth-child(1){height:11px}.segs i:nth-child(2){height:15px}.segs i:nth-child(3){height:19px}
+.segs i:nth-child(4){height:23px}.segs i:nth-child(5){height:26px}
+.pct{font-size:30px;font-weight:800;line-height:1}
+.pct small{font-size:15px;font-weight:600}
+.range{font-size:24px;font-weight:800}.range small{font-size:14px;color:var(--mut);font-weight:600}
+.lbl{font-size:12px;letter-spacing:.04em;color:var(--mut);text-transform:uppercase;font-weight:700;margin-bottom:6px}
+.big{font-size:24px;font-weight:800}
+.g4{display:flex;justify-content:space-between;gap:8px;margin-top:2px}
+.g4 div{flex:1;text-align:center}
+.g4 .m{font-size:12px;font-weight:800}.g4 .v{font-size:16px;font-weight:700;margin-top:2px}
+.modebar{height:8px;border-radius:6px;margin-top:12px;background:var(--line)}
+.between{display:flex;justify-content:space-between;align-items:center}
+.pill{font-size:13px;font-weight:700;padding:5px 12px;border-radius:20px}
+button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:9px 14px;font-size:14px;cursor:pointer;margin:4px 6px 0 0}
+button.sec{background:#e6e7ea;color:#222}button:disabled{opacity:.5;cursor:default}
+.armbtns button{padding:8px 12px}
+.row{display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--line);border-radius:12px;margin:6px 0;cursor:pointer}
+.row.sel{border-color:var(--acc);background:#e8f6fe}
+.muted{color:var(--mut);font-size:13px}.ok{color:#1f7a37;font-weight:700}.bad{color:#c62828;font-weight:700}
+.hidden{display:none}h2{font-size:16px;margin:0 0 6px}
+</style></head><body><div class=wrap>
+<div class=tabs>
+  <button class='tab on' id=tabDash onclick="tab('dash')">Dashboard</button>
+  <button class=tab id=tabSet onclick="tab('set')">Instellingen</button>
 </div>
-<div class=card>
-  <h2>2. GPS-tracker <span class=muted>(anti-diefstal, optioneel)</span></h2>
-  <p class=muted>De tracker is altijd aan. Scan en kies 'm, of sla over.</p>
-  <button onclick="scan('tracker')">Scan trackers</button>
-  <button class=sec onclick="skipTracker()">Overslaan / uit</button><div id=trackers></div>
-  <div id=trackerActions class=hidden><button onclick="selectTracker()">Selecteer deze tracker</button></div>
-</div>
-<div class=card>
-  <h2>3. Alarm <span class=muted>(optioneel — vereist de tracker)</span></h2>
-  <p class=muted>HomeKit-beveiligingssysteem op de beweging: <b>Afwezig</b> = hard (push + lampen), <b>Thuis</b> = stil (alleen melding). Uit = alleen de bewegingssensor, geen alarm.</p>
-  <button id=alarmBtn onclick="toggleAlarm()">…</button> <span id=alarmState class=muted></span>
+
+<section id=dash>
+  <div class='card hero'>
+    <div class=htitle id=bikeTitle>Urban Arrow</div>
+    <span class=badge id=conn>—</span>
+    <div class=sub id=updated></div>
+    <svg class=bike width=220 height=96 viewBox='0 0 220 96' fill=none stroke=#cdd2da stroke-width=4>
+      <circle cx=42 cy=68 r=22 /><circle cx=178 cy=68 r=22 />
+      <path d='M42 68 L96 68 L150 30 M96 68 L150 68 L178 68 M120 68 L96 30 L150 30' stroke-linecap=round stroke-linejoin=round/>
+      <rect x=96 y=44 width=60 height=22 rx=4 fill=#e7eaef stroke=none/>
+    </svg>
+    <div class=hstats>
+      <div style='display:flex;align-items:center;gap:10px'><div class=segs id=segs></div><div class=pct id=pct>—<small>%</small></div></div>
+      <div class=range id=range>—<small> km</small></div>
+    </div>
+  </div>
+
+  <div class=card><div class=lbl>Rijmodus</div><div class=between><div class=big id=mode>—</div><span class=pill id=modePill></span></div></div>
+
+  <div class=card><div class=lbl>Geschat bereik per stand</div>
+    <div class=g4 id=ranges></div><div class=modebar></div></div>
+
+  <div class=card><div class=lbl>Onderhoud</div><div class=big id=service>—</div><div class=sub>tot de volgende servicebeurt</div></div>
+
+  <div class=card><div class=lbl>Kilometerstand</div><div class=big id=odo>—</div></div>
+
+  <div class=card><div class=between><div><div class=lbl>Beveiliging</div><div id=secLine class=big>—</div></div></div>
+    <div class=armbtns id=armBox style='margin-top:8px'></div></div>
+</section>
+
+<section id=set class=hidden>
+  <div class=card>
+    <h2>1. Fiets</h2><p class=muted>Zet het display van de fiets aan en scan.</p>
+    <button onclick="scan('bike')">Scan fietsen</button><div id=bikes></div>
+    <div id=bikeActions class=hidden><button onclick="selectBike()">Selecteer deze fiets</button></div>
+    <div id=pairBox class=hidden style='margin-top:8px'>
+      <p class=muted>Zet de fiets in <b>pairing mode</b> (display → nieuw apparaat koppelen), klik dan:</p>
+      <button id=pairBtn onclick="pair()">Koppel (pair)</button><span id=pairMsg></span></div>
+  </div>
+  <div class=card>
+    <h2>2. GPS-tracker <span class=muted>(anti-diefstal, optioneel)</span></h2>
+    <p class=muted>De tracker is altijd aan. Scan en kies 'm, of sla over.</p>
+    <button onclick="scan('tracker')">Scan trackers</button>
+    <button class=sec onclick="skipTracker()">Overslaan / uit</button><div id=trackers></div>
+    <div id=trackerActions class=hidden><button onclick="selectTracker()">Selecteer deze tracker</button></div>
+  </div>
+  <div class=card>
+    <h2>3. Alarm <span class=muted>(optioneel — vereist de tracker)</span></h2>
+    <p class=muted><b>Afwezig</b> = hard (push + lampen), <b>Thuis</b> = stil (alleen melding). Uit = alleen de bewegingssensor.</p>
+    <button id=alarmBtn onclick="toggleAlarm()">…</button> <span id=alarmState class=muted></span>
+  </div>
+</section>
 </div>
 <script>
-let pick={bike:null,tracker:null};
 const $=s=>document.querySelector(s);
 const api=async(p,o)=>(await fetch(p,o)).json();
-const fmt=d=>`${d.address} · ${d.rssi} dBm`+(d.module_mac?` · ${d.module_mac}`:'');
-async function refresh(){const s=await api('api/status');const L=s.last||{};const di=L.device_info||{};const dev=s.device||{};
-  const bikeName=`${di.manufacturer||dev.manufacturer||'Bosch'} — ${di.model||dev.model||'Smart System'}`+(di.serial?` <span class=muted>· ${di.serial}</span>`:'');
-  $('#status').innerHTML=[
-   `<span class=kv>🔋 ${L.battery??'?'}%</span>`,
-   `<span class=kv>⚙️ ${L.mode??'?'}</span>`,
-   `<span class=kv>🛡️ ${L.alarm??'?'}</span>`,
-   `<span class=kv>🚲 ${s.bike?`<span class=ok>${bikeName}</span> <span class=muted>(${s.bike})</span>`:'<span class=bad>geen fiets</span>'}</span>`,
-   `<span class=kv>📡 ${s.tracker_off?'tracker uit':(L.tracker_connected?'<span class=ok>tracker verbonden</span>':(s.tracker?s.tracker:'tracker auto'))}</span>`,
-  ].join('');
+const post=(p,b)=>api(p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b||{})});
+const MC={Turbo:'#e2241a',Auto:'#7b3ff2','Tour+':'#1aa3e0',Tour:'#1aa3e0',Eco:'#5fb336',Off:'#8a8a8a'};
+const bcol=p=>p>40?'#37a24a':p>15?'#f59e0b':'#e53935';
+let pick={bike:null,tracker:null};
+function tab(t){$('#dash').classList.toggle('hidden',t!='dash');$('#set').classList.toggle('hidden',t!='set');
+  $('#tabDash').classList.toggle('on',t=='dash');$('#tabSet').classList.toggle('on',t=='set');}
+function ago(iso){if(!iso)return '';const t=Date.parse(iso);if(isNaN(t))return '';
+  const s=Math.max(0,(Date.now()-t)/1000);
+  if(s<90)return 'zojuist bijgewerkt';if(s<3600)return 'bijgewerkt '+Math.round(s/60)+' min geleden';
+  if(s<86400)return 'bijgewerkt '+Math.round(s/3600)+' uur geleden';return 'bijgewerkt '+Math.round(s/86400)+' d geleden';}
+const fresh=iso=>{const t=Date.parse(iso);return !isNaN(t)&&(Date.now()-t)<150000;};
+async function refresh(){const s=await api('api/status');const L=s.last||{};const di=L.device_info||{};const dev=s.device||{};const R=L.range||{};
+  $('#bikeTitle').textContent=`${di.manufacturer||dev.manufacturer||'Bosch'} — ${di.model||dev.model||'Smart System'}`;
+  const f=fresh(L.last_updated);
+  $('#conn').className='badge'+(f?' on':'');$('#conn').textContent=f?'Verbonden':'Niet verbonden';
+  $('#updated').textContent=(L.last_updated?ago(L.last_updated):'nog geen meting')+(s.bike?' · '+s.bike:'');
+  const p=L.battery; const fill=p==null?0:Math.max(0,Math.min(5,Math.round(p/20)));
+  let seg='';for(let i=0;i<5;i++)seg+=`<i style="background:${i<fill?bcol(p):'#dfe2e7'}"></i>`;$('#segs').innerHTML=seg;
+  $('#pct').innerHTML=(p??'—')+'<small>%</small>';
+  $('#range').innerHTML=(R.turbo!=null?`${R.turbo}–${R.eco}`:'—')+'<small> km</small>';
+  $('#mode').textContent=L.mode||'—';const mp=$('#modePill');
+  if(L.mode){mp.style.display='';mp.style.background=(MC[L.mode]||'#888')+'22';mp.style.color=MC[L.mode]||'#888';mp.textContent=L.mode;}else mp.style.display='none';
+  const order=[['turbo','TURBO'],['auto','AUTO'],['tour','TOUR+'],['eco','ECO']];
+  $('#ranges').innerHTML=order.map(([k,n])=>`<div><div class=m style="color:${MC[n=='TOUR+'?'Tour+':n[0]+n.slice(1).toLowerCase()]||'#555'}">${n}</div><div class=v>${R[k]??'—'}<small> km</small></div></div>`).join('');
+  $('#service').textContent=L.next_service!=null?L.next_service+' km':'—';
+  $('#odo').textContent=L.odometer!=null?L.odometer.toLocaleString('nl-NL')+' km':'—';
+  // security
+  const A=L.alarm; const nm={disarmed:'Uit',armed_home:'Thuis (stil)',armed_away:'Afwezig (scherp)',triggered:'⚠️ GEACTIVEERD'}[A]||'—';
+  const mv=L.motion?'beweging':'rustig';
+  $('#secLine').innerHTML=s.alarm_off?'Alarm uit · '+mv:`${nm} · ${mv}`;
+  $('#armBox').innerHTML=s.alarm_off?'<span class=muted>Alarm staat uit (zie Instellingen)</span>':
+    ['DISARM:Uit','ARM_HOME:Thuis','ARM_AWAY:Afwezig'].map(x=>{const[c,l]=x.split(':');
+     return `<button class="${(A==(c=='DISARM'?'disarmed':c=='ARM_HOME'?'armed_home':'armed_away'))?'':'sec'}" onclick="arm('${c}')">${l}</button>`}).join('');
+  // settings tab bits
   window._alarmOff=s.alarm_off;
   $('#alarmBtn').textContent=s.alarm_off?'Alarm inschakelen':'Alarm uitschakelen';
   $('#alarmState').innerHTML=s.alarm_off?'momenteel <b>uit</b>':'momenteel <span class=ok>aan</span>';}
+async function arm(cmd){await post('api/alarm',{cmd});refresh()}
 async function toggleAlarm(){await post('api/set_alarm',{on:window._alarmOff===true});refresh()}
-async function scan(kind){const box=kind==='bike'?'#bikes':'#trackers';
+const fmt=d=>`${d.address} · ${d.rssi} dBm`+(d.module_mac?` · ${d.module_mac}`:'');
+async function scan(kind){const box=kind=='bike'?'#bikes':'#trackers';
   $(box).innerHTML='<span class=muted>scannen… (±8s)</span>';
-  const list=await api('api/scan',{method:'POST'});const items=list.filter(d=>d.kind===kind);
+  const list=await api('api/scan',{method:'POST'});const items=list.filter(d=>d.kind==kind);
   if(!items.length){$(box).innerHTML='<span class=muted>niets gevonden — staat het apparaat aan/in bereik?</span>';return}
   $(box).innerHTML='';items.forEach(d=>{const el=document.createElement('div');el.className='row';
    el.innerHTML=`<div><b>${d.name||kind}</b><div class=muted style="font-size:12px">${fmt(d)}</div></div>`;
    el.onclick=()=>{pick[kind]=d;[...$(box).children].forEach(c=>c.classList.remove('sel'));el.classList.add('sel');
-    $(kind==='bike'?'#bikeActions':'#trackerActions').classList.remove('hidden')};
+    $(kind=='bike'?'#bikeActions':'#trackerActions').classList.remove('hidden')};
    $(box).appendChild(el);});}
-const post=(p,b)=>api(p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b||{})});
 async function selectBike(){await post('api/select_bike',{address:pick.bike.address});$('#pairBox').classList.remove('hidden');refresh()}
 async function pair(){$('#pairBtn').disabled=true;$('#pairMsg').textContent=' koppelen…';
   const r=await post('api/pair');$('#pairBtn').disabled=false;
@@ -913,6 +999,18 @@ async def _ui_set_alarm(request):
             publish_alarm("disarmed")
     log.info("UI: alarm %s", "off" if _alarm_off else "on")
     return web.json_response({"ok": True, "alarm_off": _alarm_off})
+
+
+async def _ui_alarm(request):
+    data = await request.json()
+    new = {"DISARM": "disarmed", "ARM_AWAY": "armed_away",
+           "ARM_HOME": "armed_home"}.get((data.get("cmd") or "").upper())
+    if not new:
+        return web.json_response({"ok": False}, status=400)
+    _alarm["state"] = new
+    _alarm["fired"] = False
+    publish_alarm(new)
+    return web.json_response({"ok": True, "state": new})
 
 
 async def _ui_scan(_request):
@@ -967,6 +1065,7 @@ async def start_web() -> None:
         web.post("/api/pair", _ui_pair),
         web.post("/api/select_tracker", _ui_select_tracker),
         web.post("/api/set_alarm", _ui_set_alarm),
+        web.post("/api/alarm", _ui_alarm),
     ])
     runner = web.AppRunner(app)
     await runner.setup()
