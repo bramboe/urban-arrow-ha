@@ -881,25 +881,26 @@ async def start_motion(_mqtt_client: mqtt.Client) -> None:
 INDEX_HTML = """<!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content='width=device-width,initial-scale=1'><title>Urban Arrow</title>
 <style>
-:root{--ink:#1b1b1f;--mut:#787884;--line:#eceef2;--acc:#03a9f4}
+:root{--bg:#f2f3f5;--card:#fff;--soft:#eef1f4;--ink:#212121;--mut:#727272;--line:#e0e0e0;--acc:#03a9f4;--chip:#e9eaee}
+@media(prefers-color-scheme:dark){:root{--bg:#111;--card:#1c1c1c;--soft:#262626;--ink:#e1e1e1;--mut:#9b9b9b;--line:#3a3a3a;--acc:#03a9f4;--chip:#2a2a2a}}
 *{box-sizing:border-box}
-body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:#f1f2f5;color:var(--ink);line-height:1.45}
+body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:var(--bg);color:var(--ink);line-height:1.45}
 .wrap{max-width:none;margin:0 auto;padding:22px 22px 48px}
 .tabs{display:flex;gap:8px;margin:2px 0 22px;max-width:380px}
-.tab{flex:1;background:#e6e7ea;color:#555;border:0;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer}
-.tab.on{background:var(--ink);color:#fff}
-.dash{display:grid;gap:20px;grid-template-columns:1fr}
+.tab{flex:1;background:var(--chip);color:var(--mut);border:0;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer}
+.tab.on{background:var(--acc);color:#fff}
+.dash{display:grid;gap:16px;grid-template-columns:1fr}
 @media(min-width:720px){.dash{grid-template-columns:1.55fr 1fr;align-items:start}
  .col-wide{grid-column:1}.col-rail{grid-column:2;grid-row:1 / span 6}}
-.rail{display:flex;flex-direction:column;gap:20px}
-.card{background:#fff;border-radius:22px;padding:24px;box-shadow:0 2px 8px rgba(20,20,40,.05)}
+.rail{display:flex;flex-direction:column;gap:16px}
+.card{background:var(--card);border-radius:12px;padding:20px;box-shadow:0 2px 1px -1px rgba(0,0,0,.2),0 1px 1px 0 rgba(0,0,0,.14),0 1px 3px 0 rgba(0,0,0,.12)}
 .set .card{margin-bottom:18px}
 .hero{text-align:center;padding:30px 24px 26px}
 .htitle{font-size:21px;font-weight:800;letter-spacing:-.01em}
-.badge{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.06em;padding:6px 15px;border-radius:20px;background:#e9eaee;color:#6a6a74;margin-top:14px;text-transform:uppercase}
-.badge.on{background:#e3f5e8;color:#1f7a37}
+.badge{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.06em;padding:6px 15px;border-radius:20px;background:var(--chip);color:var(--mut);margin-top:14px;text-transform:uppercase}
+.badge.on{background:rgba(67,160,71,.18);color:#43a047}
 .sub{color:var(--mut);font-size:12.5px;margin-top:9px}
-.bikewrap{background:#eef1f4;border-radius:18px;margin:24px 0 22px;padding:26px 18px}
+.bikewrap{background:var(--soft);border-radius:12px;margin:24px 0 22px;padding:26px 18px}
 .bike{display:block;margin:0 auto;width:100%;max-width:340px;height:auto}
 .hstats{display:flex;justify-content:center;align-items:center;gap:32px;padding-top:4px}
 .hstats .vr{width:1px;height:42px;background:var(--line)}
@@ -919,11 +920,11 @@ body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:#f1f2f5;
 .between{display:flex;justify-content:space-between;align-items:center}
 .pill{font-size:13px;font-weight:700;padding:6px 14px;border-radius:20px}
 button{background:var(--acc);color:#fff;border:0;border-radius:12px;padding:11px 16px;font-size:14px;cursor:pointer;margin:6px 8px 0 0}
-button.sec{background:#e9eaee;color:#222}button:disabled{opacity:.5;cursor:default}
+button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cursor:default}
 .armbtns{margin-top:16px}.armbtns button{padding:10px 15px}
-.row{display:flex;align-items:center;gap:10px;padding:14px;border:1px solid var(--line);border-radius:14px;margin:8px 0;cursor:pointer}
-.row.sel{border-color:var(--acc);background:#e8f6fe}
-.muted{color:var(--mut);font-size:13px}.ok{color:#1f7a37;font-weight:700}.bad{color:#c62828;font-weight:700}
+.row{display:flex;align-items:center;gap:10px;padding:14px;border:1px solid var(--line);border-radius:12px;margin:8px 0;cursor:pointer}
+.row.sel{border-color:var(--acc);background:rgba(3,169,244,.12)}
+.muted{color:var(--mut);font-size:13px}.ok{color:#43a047;font-weight:700}.bad{color:#e53935;font-weight:700}
 .hidden{display:none}h2{font-size:17px;margin:0 0 10px}.set p{margin:6px 0 14px}
 </style></head><body><div class=wrap>
 <div class=tabs>
@@ -939,9 +940,9 @@ button.sec{background:#e9eaee;color:#222}button:disabled{opacity:.5;cursor:defau
     <div class=sub id=updated></div>
     <div class=bikewrap>
       <svg class=bike viewBox='0 0 300 130' fill=none>
-        <g stroke=#c2c8d2 stroke-width=6><circle cx=64 cy=98 r=27 /><circle cx=244 cy=100 r=25 /></g>
-        <path d='M122 98 L122 50 L210 50 L226 98 Z' fill=#2b2e35 />
-        <rect x=150 y=70 width=44 height=7 rx=2 fill=#565b66 />
+        <g stroke=#9aa3af stroke-width=6><circle cx=64 cy=98 r=27 /><circle cx=244 cy=100 r=25 /></g>
+        <path d='M122 98 L122 50 L210 50 L226 98 Z' fill=#566273 />
+        <rect x=150 y=70 width=44 height=7 rx=2 fill=#aab2bf />
         <g stroke=#9aa3af stroke-width=6 stroke-linecap=round stroke-linejoin=round>
           <path d='M64 98 L112 98 L150 54' /><path d='M112 98 L226 98 L244 100' />
           <path d='M226 98 L238 58 L250 54' /><path d='M98 98 L92 56 L106 56' />
