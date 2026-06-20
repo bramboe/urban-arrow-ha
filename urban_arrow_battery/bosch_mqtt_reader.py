@@ -109,7 +109,9 @@ def _save_cfg() -> None:
     try:
         with open(DATA_FILE, "w") as fh:
             json.dump({"bike": _bike_addr, "tracker": _tracker_mac,
-                       "tracker_off": _tracker_off, "alarm_off": _alarm_off}, fh)
+                       "tracker_off": _tracker_off, "alarm_off": _alarm_off,
+                       "bike_model": _last.get("bike_model"),
+                       "battery_model": _last.get("battery_model")}, fh)
     except Exception as err:  # noqa: BLE001
         log.warning("save config: %s", err)
 
@@ -128,6 +130,10 @@ _alarm_off: bool = bool(_cfg0.get("alarm_off", False))
 _discovered: dict[str, dict] = {}
 # Last known values, for the setup UI status panel.
 _last: dict[str, object] = {}
+if _cfg0.get("bike_model"):
+    _last["bike_model"] = _cfg0["bike_model"]
+if _cfg0.get("battery_model"):
+    _last["battery_model"] = _cfg0["battery_model"]
 # Serialise BLE scans: the reader loop, tracker locate, and UI scans must not run
 # a BleakScanner simultaneously (org.bluez "Operation already in progress").
 _scan_lock = asyncio.Lock()
@@ -536,6 +542,24 @@ async def ensure_bonded(address: str) -> bool:
 
 
 # -------------------------------------------------------------------- BLE
+def _pb_strings(b: bytes) -> list[str]:
+    """Extract protobuf string fields (0a <len> <ascii>) from a push frame —
+    the bike's component-info records (model, battery, serials, …)."""
+    out: list[str] = []
+    i = 0
+    while i < len(b) - 1:
+        if b[i] == 0x0A:
+            ln = b[i + 1]
+            if 3 <= ln <= 40 and i + 2 + ln <= len(b):
+                chunk = b[i + 2:i + 2 + ln]
+                if all(32 <= c < 127 for c in chunk):
+                    out.append(chunk.decode())
+                    i += 2 + ln
+                    continue
+        i += 1
+    return out
+
+
 async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | None]:
     """Subscribe to the Bosch push channel and capture the live ride mode and
     the estimated range per mode.
@@ -544,7 +568,8 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
     (so the bike pushes the mode (9809) and range (9857) attributes), listens
     briefly, and returns (mode, ranges). Either may be None if nothing arrived.
     """
-    latest: dict[str, object] = {"mode": None, "range": None}
+    latest: dict[str, object] = {"mode": None, "range": None,
+                                 "model": None, "battery_model": None}
     count = {"n": 0}
 
     def cb(_char, data: bytearray) -> None:
@@ -557,6 +582,11 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
         r = parse_range(b)
         if r:
             latest["range"] = r
+        for svalue in _pb_strings(b):  # component info (model, battery, …)
+            if svalue == "Urban Arrow":
+                latest["model"] = svalue
+            elif svalue.startswith("PowerPack"):
+                latest["battery_model"] = svalue.replace(" Frame", "").strip()
 
     try:
         for attempt in range(2):  # tolerate a "service discovery not done yet" race
@@ -587,6 +617,13 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
         await client.stop_notify(PUSH_NOTIFY)
         log.debug("push channel: %d frame(s), mode=%s range=%s",
                   count["n"], latest["mode"], latest["range"])
+        if latest["model"]:
+            _last["bike_model"] = latest["model"]
+        if latest["battery_model"]:
+            _last["battery_model"] = latest["battery_model"]
+        if latest["model"] or latest["battery_model"]:
+            log.info("components: model=%s battery=%s", latest["model"], latest["battery_model"])
+            _save_cfg()  # persist so the model shows immediately after a restart
     except Exception as err:  # noqa: BLE001
         log.warning("push read failed: %s: %s", type(err).__name__, err)
     return latest["mode"], latest["range"]  # type: ignore[return-value]
@@ -897,6 +934,7 @@ button.sec{background:#e9eaee;color:#222}button:disabled{opacity:.5;cursor:defau
 <section id=dash class=dash>
   <div class='card hero col-wide'>
     <div class=htitle id=bikeTitle>Urban Arrow</div>
+    <div class=sub id=bikeSpec></div>
     <span class=badge id=conn>—</span>
     <div class=sub id=updated></div>
     <div class=bikewrap>
@@ -969,7 +1007,8 @@ function ago(iso){if(!iso)return '';const t=Date.parse(iso);if(isNaN(t))return '
   if(s<86400)return 'bijgewerkt '+Math.round(s/3600)+' uur geleden';return 'bijgewerkt '+Math.round(s/86400)+' d geleden';}
 const fresh=iso=>{const t=Date.parse(iso);return !isNaN(t)&&(Date.now()-t)<150000;};
 async function refresh(){const s=await api('api/status');const L=s.last||{};const di=L.device_info||{};const dev=s.device||{};const R=L.range||{};
-  $('#bikeTitle').textContent=`${di.manufacturer||dev.manufacturer||'Bosch'} — ${di.model||dev.model||'Smart System'}`;
+  $('#bikeTitle').textContent=L.bike_model||`${di.manufacturer||dev.manufacturer||'Bosch'} — ${di.model||dev.model||'Smart System'}`;
+  $('#bikeSpec').textContent=['Bosch '+(di.model||dev.model||'Smart System'),L.battery_model].filter(Boolean).join(' · ');
   const f=fresh(L.last_updated);
   $('#conn').className='badge'+(f?' on':'');$('#conn').textContent=f?'Verbonden':'Niet verbonden';
   $('#updated').textContent=(L.last_updated?ago(L.last_updated):'nog geen meting')+(s.bike?' · '+s.bike:'');
