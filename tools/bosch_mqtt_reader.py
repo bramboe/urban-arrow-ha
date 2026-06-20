@@ -73,6 +73,11 @@ ARMED_STATES = ("armed_away", "armed_home", "armed_night")
 _mqtt: "mqtt.Client | None" = None
 # Alarm state machine (HomeKit Security System via MQTT alarm_control_panel).
 _alarm: dict[str, object] = {"state": "disarmed", "restored": False, "fired": False}
+# Auto-detect: lock onto the first bike we successfully read, and back off bikes
+# we fail to pair with (neighbours' "smart system eBike"s), to avoid churn.
+_locked_addr: "str | None" = None
+_pair_fail: dict[str, float] = {}
+PAIR_RETRY_AFTER = 3600.0
 
 
 def publish_status(status: str, present: str = "ON") -> None:
@@ -472,7 +477,16 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
             latest["range"] = r
 
     try:
-        await client.start_notify(PUSH_NOTIFY, cb)
+        for attempt in range(2):  # tolerate a "service discovery not done yet" race
+            try:
+                await client.start_notify(PUSH_NOTIFY, cb)
+                break
+            except Exception as err:  # noqa: BLE001
+                if attempt == 0:
+                    log.debug("start_notify retry after: %s", err)
+                    await asyncio.sleep(1.5)
+                else:
+                    raise
         log.debug("subscribed to push channel %s; sending subscriptions", PUSH_NOTIFY)
         # Replayed verbatim from the Bosch app (Flow.pklg): the registration
         # header, then the ride-mode (9809) and per-mode range (9857) attribute
@@ -558,6 +572,8 @@ async def find_bike(timeout: float = 15.0):
         if AUTO:
             if NAME_MATCH not in name.lower():
                 return
+            if _locked_addr and device.address.upper() != _locked_addr.upper():
+                return  # locked onto our bike — ignore other "smart system eBike"s
             if device.address not in seen:
                 seen.add(device.address)
                 log.info("bike candidate: %s  '%s'  rssi=%s", device.address, name, adv.rssi)
@@ -576,6 +592,7 @@ async def find_bike(timeout: float = 15.0):
 
 async def ble_loop(mqtt_client: mqtt.Client) -> None:
     """Scan (fresh each cycle); on detection, bond if needed and read once."""
+    global _locked_addr
     last_ok = 0.0
     log.info("scanning (%s)", "auto-detect 'smart system eBike'" if AUTO else ADDRESS)
     while True:
@@ -586,10 +603,20 @@ async def ble_loop(mqtt_client: mqtt.Client) -> None:
             elif time.time() - last_ok < COOLDOWN:
                 # Seen recently; wait out the cooldown before reading again.
                 publish_status("Bike in range — waiting (cooldown)", "ON")
+            elif (AUTO and _locked_addr is None and device.address in _pair_fail
+                  and time.time() - _pair_fail[device.address] < PAIR_RETRY_AFTER):
+                # A nearby eBike we couldn't pair with (a neighbour's) — skip it.
+                publish_status("Ignoring an unknown nearby eBike", "OFF")
             else:
                 log.info("bike seen — connecting to read")
-                if await ensure_bonded(device.address) and await read_snapshot(mqtt_client, device):
+                if not await ensure_bonded(device.address):
+                    _pair_fail[device.address] = time.time()
+                elif await read_snapshot(mqtt_client, device):
                     last_ok = time.time()
+                    if AUTO and _locked_addr is None:
+                        _locked_addr = device.address
+                        _pair_fail.clear()
+                        log.info("locked onto bike %s", device.address)
         except Exception as err:  # noqa: BLE001
             log.warning("cycle failed: %s: %s", type(err).__name__, err or "(timeout)")
             publish_status("Connection failed — keep the bike on, retrying…", "ON")
