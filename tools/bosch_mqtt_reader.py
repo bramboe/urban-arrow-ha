@@ -262,6 +262,11 @@ def _on_connect(client, _userdata, _flags, reason, _properties=None):
     # Alarm: receive HomeKit/HA arm/disarm commands + restore the retained state.
     client.subscribe(ALARM_CMD_TOPIC)
     client.subscribe(ALARM_STATE_TOPIC)
+    # Restore the last measurement (retained) so the UI shows it after a restart.
+    client.subscribe(STATE_TOPIC)
+    client.subscribe(MODE_TOPIC)
+    client.subscribe(RANGE_TOPIC)
+    client.subscribe(MOTION_TOPIC)
     log.info("connected to MQTT %s:%s", MQTT_HOST, MQTT_PORT)
 
 
@@ -283,7 +288,25 @@ def _on_message(_client, _userdata, msg) -> None:
         _alarm["restored"] = True
         if payload in ARMED_STATES + ("disarmed", "triggered"):
             _alarm["state"] = payload
+            _last["alarm"] = payload
             log.info("alarm state restored: %s", payload)
+    elif msg.topic == STATE_TOPIC:        # retained last reading -> show in the UI
+        try:
+            _last.update(json.loads(payload))
+        except Exception:  # noqa: BLE001
+            pass
+    elif msg.topic == MODE_TOPIC:
+        try:
+            _last["mode"] = json.loads(payload).get("mode")
+        except Exception:  # noqa: BLE001
+            pass
+    elif msg.topic == RANGE_TOPIC:
+        try:
+            _last["range"] = json.loads(payload)
+        except Exception:  # noqa: BLE001
+            pass
+    elif msg.topic == MOTION_TOPIC:
+        _last["motion"] = payload == "ON"
 
 
 def publish_alarm_discovery(client: mqtt.Client) -> None:
