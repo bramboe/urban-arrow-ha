@@ -1007,7 +1007,7 @@ function ago(iso){if(!iso)return '';const t=Date.parse(iso);if(isNaN(t))return '
   if(s<86400)return 'bijgewerkt '+Math.round(s/3600)+' uur geleden';return 'bijgewerkt '+Math.round(s/86400)+' d geleden';}
 const fresh=iso=>{const t=Date.parse(iso);return !isNaN(t)&&(Date.now()-t)<150000;};
 async function refresh(){const s=await api('api/status');const L=s.last||{};const di=L.device_info||{};const dev=s.device||{};const R=L.range||{};
-  $('#bikeTitle').textContent=L.bike_model||`${di.manufacturer||dev.manufacturer||'Bosch'} — ${di.model||dev.model||'Smart System'}`;
+  $('#bikeTitle').textContent=L.bike_model||'Urban Arrow';
   $('#bikeSpec').textContent=['Bosch '+(di.model||dev.model||'Smart System'),L.battery_model].filter(Boolean).join(' · ');
   const f=fresh(L.last_updated);
   $('#conn').className='badge'+(f?' on':'');$('#conn').textContent=f?'Verbonden':'Niet verbonden';
