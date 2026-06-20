@@ -900,7 +900,7 @@ body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:var(--bg
 .badge{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.06em;padding:6px 15px;border-radius:20px;background:var(--chip);color:var(--mut);margin-top:14px;text-transform:uppercase}
 .badge.on{background:rgba(67,160,71,.18);color:#43a047}
 .sub{color:var(--mut);font-size:12.5px;margin-top:9px}
-.reqlink{display:inline-block;margin-top:14px;font-size:12px;color:var(--mut);text-decoration:none;border:1px solid var(--line);padding:6px 13px;border-radius:18px}
+.reqlink{display:inline-block;margin:14px 0 18px;font-size:12px;color:var(--mut);text-decoration:none;border:1px solid var(--line);padding:6px 13px;border-radius:18px}
 .reqlink:hover{color:var(--acc);border-color:var(--acc)}
 .bikewrap{background:#eef1f3;border-radius:12px;margin:24px 0 22px;padding:24px 18px}
 .bike{display:block;margin:0 auto;width:100%;max-width:340px;height:auto}
