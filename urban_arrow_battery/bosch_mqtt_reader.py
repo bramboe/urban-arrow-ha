@@ -79,6 +79,7 @@ STATUS_TOPIC = f"{NODE}/status"
 MODE_TOPIC = f"{NODE}/mode"
 RANGE_TOPIC = f"{NODE}/range"
 MOTION_TOPIC = f"{NODE}/motion"
+TRACKER_TOPIC = f"{NODE}/tracker"
 ALARM_STATE_TOPIC = f"{NODE}/alarm/state"
 ALARM_CMD_TOPIC = f"{NODE}/alarm/cmd"
 ARMED_STATES = ("armed_away", "armed_home", "armed_night")
@@ -287,6 +288,7 @@ def _on_connect(client, _userdata, _flags, reason, _properties=None):
     client.subscribe(MODE_TOPIC)
     client.subscribe(RANGE_TOPIC)
     client.subscribe(MOTION_TOPIC)
+    client.subscribe(TRACKER_TOPIC)
     log.info("connected to MQTT %s:%s", MQTT_HOST, MQTT_PORT)
 
 
@@ -327,6 +329,11 @@ def _on_message(_client, _userdata, msg) -> None:
             pass
     elif msg.topic == MOTION_TOPIC:
         _last["motion"] = payload == "ON"
+    elif msg.topic == TRACKER_TOPIC:
+        try:
+            _last["tracker_battery"] = json.loads(payload).get("battery")
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def publish_alarm_discovery(client: mqtt.Client) -> None:
@@ -433,6 +440,22 @@ def _publish_discovery(client: mqtt.Client) -> None:
             "payload_off": "OFF",
             "device_class": "motion",  # HomeKit maps this to a Motion Sensor
             "icon": "mdi:bike-fast",
+            "device": DEVICE,
+        }),
+        retain=True,
+    )
+
+    # Tracker (COMODULE) own battery — drives the low-battery alarm cutoff.
+    client.publish(
+        f"{DISC_PREFIX}/sensor/{NODE}/tracker_battery/config",
+        json.dumps({
+            "name": "Tracker battery",
+            "unique_id": f"{NODE}_tracker_battery",
+            "state_topic": TRACKER_TOPIC,
+            "value_template": "{{ value_json.battery }}",
+            "device_class": "battery",
+            "unit_of_measurement": "%",
+            "entity_category": "diagnostic",
             "device": DEVICE,
         }),
         retain=True,
@@ -836,7 +859,14 @@ async def motion_watcher() -> None:
     state = {"on": False, "last": 0.0, "since": 0.0}
 
     def cb(_c, data: bytearray) -> None:
-        if len(data) > 1 and data[1] == FRAME_MOTION:
+        b = bytes(data)
+        if len(b) > 2 and b[1] == 0xC6:        # COMODULE status: byte2 = its own battery %
+            bat = b[2]
+            if 0 <= bat <= 100 and _last.get("tracker_battery") != bat:
+                _last["tracker_battery"] = bat
+                if _mqtt is not None:
+                    _mqtt.publish(TRACKER_TOPIC, json.dumps({"battery": bat}), retain=True)
+        if len(b) > 1 and b[1] == FRAME_MOTION:
             now = time.time()
             state["last"] = now
             if not state["on"]:
@@ -868,6 +898,17 @@ async def motion_watcher() -> None:
                 while client.is_connected and _want_tracker():
                     await asyncio.sleep(1)
                     now = time.time()
+                    tb = _last.get("tracker_battery")
+                    if (isinstance(tb, int) and tb <= 20
+                            and _alarm["state"] in ARMED_STATES):
+                        # Tracker's own battery is low — turn the alarm off so it
+                        # can sleep/charge (a notification is sent by HA).
+                        _alarm["state"] = "disarmed"
+                        _alarm["fired"] = False
+                        publish_alarm("disarmed")
+                        publish_status(f"Tracker low ({tb}%) — charge it; alarm off", "ON")
+                        log.info("tracker low (%s%%) — alarm auto-disabled", tb)
+                        break
                     if state["on"] and now - state["last"] > MOTION_OFF_DELAY:
                         state["on"] = False
                         publish_motion(False)
@@ -944,6 +985,7 @@ body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:var(--bg
 button{background:var(--acc);color:#fff;border:0;border-radius:12px;padding:11px 16px;font-size:14px;cursor:pointer;margin:6px 8px 0 0}
 button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cursor:default}
 .armbtns{margin-top:16px}.armbtns button{padding:10px 15px}
+.warn{margin-top:12px;font-size:11.5px;color:var(--mut);line-height:1.45}
 .row{display:flex;align-items:center;gap:10px;padding:14px;border:1px solid var(--line);border-radius:12px;margin:8px 0;cursor:pointer}
 .row.sel{border-color:var(--acc);background:rgba(3,169,244,.12)}
 .muted{color:var(--mut);font-size:13px}.ok{color:#43a047;font-weight:700}.bad{color:#e53935;font-weight:700}
@@ -976,7 +1018,7 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
     <div class=card><div class=lbl data-i18n=mode>Rijmodus</div><div class=between><div class=big id=mode>—</div><span class=pill id=modePill></span></div></div>
     <div class=card><div class=lbl data-i18n=maint>Onderhoud</div><div class=big id=service>—</div><div class=sub data-i18n=maint_sub>tot de volgende servicebeurt</div></div>
     <div class=card><div class=lbl data-i18n=security>Beveiliging</div><div id=secLine class=big>—</div>
-      <div class=armbtns id=armBox></div></div>
+      <div class=armbtns id=armBox></div><div class=warn id=secWarn></div></div>
   </div>
 
   <div class='card col-wide'><div class=lbl data-i18n=ranges>Geschat bereik per stand</div>
@@ -1013,8 +1055,8 @@ const $=s=>document.querySelector(s);
 const api=async(p,o)=>(await fetch(p,o)).json();
 const post=(p,b)=>api(p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b||{})});
 const LANG=(navigator.language||'en').toLowerCase().startsWith('nl')?'nl':'en';
-const T={nl:{tab_dash:'Dashboard',tab_set:'Instellingen',mode:'Rijmodus',maint:'Onderhoud',maint_sub:'tot de volgende servicebeurt',security:'Beveiliging',ranges:'Geschat bereik per stand',mileage:'Kilometerstand',su_bike_h:'1. Fiets',su_bike_p:"Zet het display van de fiets aan en scan.",scan_bikes:'Scan fietsen',select_bike:'Selecteer deze fiets',su_pair_p:'Zet de fiets in pairing mode (display → nieuw apparaat koppelen), klik dan:',pair_btn:'Koppel (pair)',su_tracker_h:'2. GPS-tracker (anti-diefstal, optioneel)',su_tracker_p:"De tracker is altijd aan. Scan en kies 'm, of sla over.",scan_trackers:'Scan trackers',skip:'Overslaan / uit',select_tracker:'Selecteer deze tracker',su_alarm_h:'3. Alarm (optioneel — vereist de tracker)',su_alarm_p:'Afwezig = hard (push + lampen), Thuis = stil (alleen melding). Uit = alleen de bewegingssensor.',conn_on:'Verbonden',conn_off:'Niet verbonden',no_reading:'nog geen meting',up_now:'zojuist bijgewerkt',up_min:'bijgewerkt {n} min geleden',up_hour:'bijgewerkt {n} uur geleden',up_day:'bijgewerkt {n} d geleden',motion_y:'beweging',motion_n:'rustig',alarm_off:'Alarm uit',s_disarmed:'Uit',s_home:'Stil',s_away:'Vol alarm',s_trig:'⚠️ GEACTIVEERD',a_off:'Uit',a_home:'Stil',a_away:'Vol alarm',alarm_off_hint:'Alarm staat uit (zie Instellingen)',alarm_enable:'Alarm inschakelen',alarm_disable:'Alarm uitschakelen',now_off:'momenteel uit',now_on:'momenteel aan',scanning:'scannen… (±8s)',nothing:'niets gevonden — staat het apparaat aan/in bereik?',pairing:'koppelen…',paired_ok:'Gekoppeld ✓',paired_fail:'Mislukt — staat de fiets in pairing mode?',request_photo:'Andere fiets? Vraag je kleur/model aan'},
-en:{tab_dash:'Dashboard',tab_set:'Settings',mode:'Ride mode',maint:'Maintenance',maint_sub:'until the next service',security:'Security',ranges:'Estimated range per mode',mileage:'Odometer',su_bike_h:'1. Bike',su_bike_p:"Turn on the bike's display and scan.",scan_bikes:'Scan bikes',select_bike:'Select this bike',su_pair_p:'Put the bike in pairing mode (display → connect a new device), then:',pair_btn:'Pair',su_tracker_h:'2. GPS tracker (anti-theft, optional)',su_tracker_p:'The tracker is always on. Scan and pick it, or skip.',scan_trackers:'Scan trackers',skip:'Skip / off',select_tracker:'Select this tracker',su_alarm_h:'3. Alarm (optional — needs the tracker)',su_alarm_p:'Away = loud (push + lights), Home = silent (notification only). Off = motion sensor only.',conn_on:'Connected',conn_off:'Not connected',no_reading:'no reading yet',up_now:'updated just now',up_min:'updated {n} min ago',up_hour:'updated {n} h ago',up_day:'updated {n} d ago',motion_y:'motion',motion_n:'still',alarm_off:'Alarm off',s_disarmed:'Off',s_home:'Silent',s_away:'Full alarm',s_trig:'⚠️ TRIGGERED',a_off:'Off',a_home:'Silent',a_away:'Full alarm',alarm_off_hint:'Alarm is off (see Settings)',alarm_enable:'Enable alarm',alarm_disable:'Disable alarm',now_off:'currently off',now_on:'currently on',scanning:'scanning… (±8s)',nothing:'nothing found — is the device on / in range?',pairing:'pairing…',paired_ok:'Paired ✓',paired_fail:'Failed — is the bike in pairing mode?',request_photo:'Different bike? Request your colour & model'}};
+const T={nl:{tab_dash:'Dashboard',tab_set:'Instellingen',mode:'Rijmodus',maint:'Onderhoud',maint_sub:'tot de volgende servicebeurt',security:'Beveiliging',ranges:'Geschat bereik per stand',mileage:'Kilometerstand',su_bike_h:'1. Fiets',su_bike_p:"Zet het display van de fiets aan en scan.",scan_bikes:'Scan fietsen',select_bike:'Selecteer deze fiets',su_pair_p:'Zet de fiets in pairing mode (display → nieuw apparaat koppelen), klik dan:',pair_btn:'Koppel (pair)',su_tracker_h:'2. GPS-tracker (anti-diefstal, optioneel)',su_tracker_p:"De tracker is altijd aan. Scan en kies 'm, of sla over.",scan_trackers:'Scan trackers',skip:'Overslaan / uit',select_tracker:'Selecteer deze tracker',su_alarm_h:'3. Alarm (optioneel — vereist de tracker)',su_alarm_p:'Afwezig = hard (push + lampen), Thuis = stil (alleen melding). Uit = alleen de bewegingssensor.',conn_on:'Verbonden',conn_off:'Niet verbonden',no_reading:'nog geen meting',up_now:'zojuist bijgewerkt',up_min:'bijgewerkt {n} min geleden',up_hour:'bijgewerkt {n} uur geleden',up_day:'bijgewerkt {n} d geleden',motion_y:'beweging',motion_n:'rustig',alarm_off:'Alarm uit',s_disarmed:'Uit',s_home:'Stil',s_away:'Vol alarm',s_trig:'⚠️ GEACTIVEERD',a_off:'Uit',a_home:'Stil',a_away:'Vol alarm',alarm_off_hint:'Alarm staat uit (zie Instellingen)',alarm_enable:'Alarm inschakelen',alarm_disable:'Alarm uitschakelen',now_off:'momenteel uit',now_on:'momenteel aan',scanning:'scannen… (±8s)',nothing:'niets gevonden — staat het apparaat aan/in bereik?',pairing:'koppelen…',paired_ok:'Gekoppeld ✓',paired_fail:'Mislukt — staat de fiets in pairing mode?',request_photo:'Andere fiets? Vraag je kleur/model aan',sec_warn:'⚠️ Let op: scherp zetten houdt de tracker verbonden — daardoor loopt de module-accu sneller leeg. Bij ≤20% schakelt het alarm automatisch uit.'},
+en:{tab_dash:'Dashboard',tab_set:'Settings',mode:'Ride mode',maint:'Maintenance',maint_sub:'until the next service',security:'Security',ranges:'Estimated range per mode',mileage:'Odometer',su_bike_h:'1. Bike',su_bike_p:"Turn on the bike's display and scan.",scan_bikes:'Scan bikes',select_bike:'Select this bike',su_pair_p:'Put the bike in pairing mode (display → connect a new device), then:',pair_btn:'Pair',su_tracker_h:'2. GPS tracker (anti-theft, optional)',su_tracker_p:'The tracker is always on. Scan and pick it, or skip.',scan_trackers:'Scan trackers',skip:'Skip / off',select_tracker:'Select this tracker',su_alarm_h:'3. Alarm (optional — needs the tracker)',su_alarm_p:'Away = loud (push + lights), Home = silent (notification only). Off = motion sensor only.',conn_on:'Connected',conn_off:'Not connected',no_reading:'no reading yet',up_now:'updated just now',up_min:'updated {n} min ago',up_hour:'updated {n} h ago',up_day:'updated {n} d ago',motion_y:'motion',motion_n:'still',alarm_off:'Alarm off',s_disarmed:'Off',s_home:'Silent',s_away:'Full alarm',s_trig:'⚠️ TRIGGERED',a_off:'Off',a_home:'Silent',a_away:'Full alarm',alarm_off_hint:'Alarm is off (see Settings)',alarm_enable:'Enable alarm',alarm_disable:'Disable alarm',now_off:'currently off',now_on:'currently on',scanning:'scanning… (±8s)',nothing:'nothing found — is the device on / in range?',pairing:'pairing…',paired_ok:'Paired ✓',paired_fail:'Failed — is the bike in pairing mode?',request_photo:'Different bike? Request your colour & model',sec_warn:'⚠️ Note: arming keeps the tracker connected — this drains the module battery faster. At ≤20% the alarm switches off automatically.'}};
 const t=(k,n)=>((T[LANG]||T.en)[k]||k).replace('{n}',n);
 function applyI18n(){document.querySelectorAll('[data-i18n]').forEach(e=>{e.textContent=t(e.dataset.i18n)});}
 const MC={Turbo:'#e2241a',Auto:'#7b3ff2','Tour+':'#1aa3e0',Tour:'#1aa3e0',Eco:'#5fb336',Off:'#8a8a8a'};
@@ -1047,8 +1089,9 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
   $('#odo').textContent=L.odometer!=null?L.odometer.toLocaleString('nl-NL')+' km':'—';
   // security
   const A=L.alarm; const nm={disarmed:t('s_disarmed'),armed_home:t('s_home'),armed_away:t('s_away'),triggered:t('s_trig')}[A]||'—';
-  const mv=L.motion?t('motion_y'):t('motion_n');
-  $('#secLine').innerHTML=s.alarm_off?t('alarm_off')+' · '+mv:`${nm} · ${mv}`;
+  const mv=L.motion?t('motion_y'):t('motion_n');const tb=L.tracker_battery;
+  $('#secLine').innerHTML=(s.alarm_off?t('alarm_off')+' · '+mv:`${nm} · ${mv}`)+(tb!=null?` · module ${tb}%`:'');
+  $('#secWarn').textContent=t('sec_warn');
   $('#armBox').innerHTML=s.alarm_off?`<span class=muted>${t('alarm_off_hint')}</span>`:
     [['DISARM','a_off','disarmed'],['ARM_HOME','a_home','armed_home'],['ARM_AWAY','a_away','armed_away']].map(([c,lk,st])=>
      `<button class="${A==st?'':'sec'}" onclick="arm('${c}')">${t(lk)}</button>`).join('');
