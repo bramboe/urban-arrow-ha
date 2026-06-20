@@ -900,7 +900,7 @@ body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:var(--bg
 .badge{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.06em;padding:6px 15px;border-radius:20px;background:var(--chip);color:var(--mut);margin-top:14px;text-transform:uppercase}
 .badge.on{background:rgba(67,160,71,.18);color:#43a047}
 .sub{color:var(--mut);font-size:12.5px;margin-top:9px}
-.bikewrap{background:var(--soft);border-radius:12px;margin:24px 0 22px;padding:26px 18px}
+.bikewrap{background:#eef1f3;border-radius:12px;margin:24px 0 22px;padding:24px 18px}
 .bike{display:block;margin:0 auto;width:100%;max-width:340px;height:auto}
 .hstats{display:flex;justify-content:center;align-items:center;gap:32px;padding-top:4px}
 .hstats .vr{width:1px;height:42px;background:var(--line)}
@@ -939,15 +939,21 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
     <span class=badge id=conn>—</span>
     <div class=sub id=updated></div>
     <div class=bikewrap>
-      <svg class=bike viewBox='0 0 300 130' fill=none>
-        <g stroke=#9aa3af stroke-width=6><circle cx=64 cy=98 r=27 /><circle cx=244 cy=100 r=25 /></g>
-        <path d='M122 98 L122 50 L210 50 L226 98 Z' fill=#566273 />
-        <rect x=150 y=70 width=44 height=7 rx=2 fill=#aab2bf />
-        <g stroke=#9aa3af stroke-width=6 stroke-linecap=round stroke-linejoin=round>
-          <path d='M64 98 L112 98 L150 54' /><path d='M112 98 L226 98 L244 100' />
-          <path d='M226 98 L238 58 L250 54' /><path d='M98 98 L92 56 L106 56' />
+      <svg class=bike viewBox='0 0 320 150' fill=none>
+        <!-- wheels (rear 26in, front 20in) -->
+        <circle cx=66 cy=114 r=30 fill=#17181a /><circle cx=66 cy=114 r=17 fill=none stroke=#c7ccd4 stroke-width=3 /><circle cx=66 cy=114 r=4 fill=#c7ccd4 />
+        <circle cx=268 cy=118 r=24 fill=#17181a /><circle cx=268 cy=118 r=13 fill=none stroke=#c7ccd4 stroke-width=3 /><circle cx=268 cy=118 r=4 fill=#c7ccd4 />
+        <!-- cargo box (Family): tall at the back, sloping down to the front -->
+        <path d='M112 114 L121 46 L198 42 L216 114 Z' fill=#202024 />
+        <path d='M122 52 L197 48' stroke=#3a3b40 stroke-width=3 stroke-linecap=round />
+        <rect x=150 y=78 width=44 height=8 rx=2 fill=#4a4c54 />
+        <!-- frame, seat, bars -->
+        <g stroke=#202024 stroke-width=7 stroke-linecap=round stroke-linejoin=round>
+          <path d='M66 114 L216 114 L268 118' />
+          <path d='M216 114 L248 60' /><path d='M248 60 L238 52 M248 60 L260 54' />
+          <path d='M98 114 L90 58 L106 58' />
         </g>
-        <circle cx=112 cy=98 r=7 fill=#9aa3af />
+        <circle cx=98 cy=114 r=8 fill=#202024 />
       </svg>
     </div>
     <div class=hstats>
