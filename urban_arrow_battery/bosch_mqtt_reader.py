@@ -853,7 +853,7 @@ body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:#f1f2f5;
 .tab.on{background:var(--ink);color:#fff}
 .dash{display:grid;gap:20px;grid-template-columns:1fr}
 @media(min-width:720px){.dash{grid-template-columns:1.55fr 1fr;align-items:start}
- .col-wide{grid-column:1}.col-rail{grid-column:2;grid-row:1 / span 6}}
+ .hero{grid-column:1/-1}.col-wide{grid-column:1}.col-rail{grid-column:2}}
 .rail{display:flex;flex-direction:column;gap:20px}
 .card{background:#fff;border-radius:22px;padding:24px;box-shadow:0 2px 8px rgba(20,20,40,.05)}
 .set .card{margin-bottom:18px}
@@ -895,7 +895,7 @@ button.sec{background:#e9eaee;color:#222}button:disabled{opacity:.5;cursor:defau
 </div>
 
 <section id=dash class=dash>
-  <div class='card hero col-wide'>
+  <div class='card hero'>
     <div class=htitle id=bikeTitle>Urban Arrow</div>
     <span class=badge id=conn>—</span>
     <div class=sub id=updated></div>
