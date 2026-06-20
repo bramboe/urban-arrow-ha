@@ -893,7 +893,7 @@ body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:var(--bg
 @media(min-width:720px){.dash{grid-template-columns:1.55fr 1fr;align-items:start}
  .col-wide{grid-column:1}.col-rail{grid-column:2;grid-row:1 / span 6}}
 .rail{display:flex;flex-direction:column;gap:16px}
-.card{background:var(--card);border-radius:12px;padding:20px;box-shadow:0 2px 1px -1px rgba(0,0,0,.2),0 1px 1px 0 rgba(0,0,0,.14),0 1px 3px 0 rgba(0,0,0,.12)}
+.card{background:var(--card);border-radius:12px;padding:20px;border:1px solid var(--line);box-shadow:0 1px 2px rgba(0,0,0,.04)}
 .set .card{margin-bottom:18px}
 .hero{text-align:center;padding:30px 24px 26px}
 .htitle{font-size:21px;font-weight:800;letter-spacing:-.01em}
