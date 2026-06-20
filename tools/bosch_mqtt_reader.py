@@ -296,7 +296,8 @@ def _publish_discovery(client: mqtt.Client) -> None:
             "unique_id": f"{NODE}_alarm",
             "state_topic": ALARM_STATE_TOPIC,
             "command_topic": ALARM_CMD_TOPIC,
-            "supported_features": ["arm_away", "arm_home", "arm_night"],
+            # Two meaningful modes for a bike: armed_away = loud, armed_home = silent.
+            "supported_features": ["arm_away", "arm_home"],
             "code_arm_required": False,
             "code_disarm_required": False,
             "code_trigger_required": False,
