@@ -821,50 +821,50 @@ async def start_motion(_mqtt_client: mqtt.Client) -> None:
 INDEX_HTML = """<!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content='width=device-width,initial-scale=1'><title>Urban Arrow</title>
 <style>
-:root{--ink:#1b1b1f;--mut:#70707a;--line:#ececf0;--acc:#03a9f4}
+:root{--ink:#1b1b1f;--mut:#787884;--line:#eceef2;--acc:#03a9f4}
 *{box-sizing:border-box}
-body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:#f2f3f5;color:var(--ink)}
-.wrap{max-width:920px;margin:0 auto;padding:12px 14px 28px}
-.tabs{display:flex;gap:6px;margin:4px 0 14px;max-width:360px}
-.tab{flex:1;background:#e6e7ea;color:#444;border:0;border-radius:10px;padding:10px;font-size:14px;font-weight:600;cursor:pointer}
+body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:#f1f2f5;color:var(--ink);line-height:1.45}
+.wrap{max-width:960px;margin:0 auto;padding:22px 20px 48px}
+.tabs{display:flex;gap:8px;margin:2px 0 22px;max-width:380px}
+.tab{flex:1;background:#e6e7ea;color:#555;border:0;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer}
 .tab.on{background:var(--ink);color:#fff}
-.dash{display:grid;gap:12px;grid-template-columns:1fr}
+.dash{display:grid;gap:20px;grid-template-columns:1fr}
 @media(min-width:720px){.dash{grid-template-columns:1.55fr 1fr;align-items:start}
  .col-wide{grid-column:1}.col-rail{grid-column:2;grid-row:1 / span 6}}
-.rail{display:flex;flex-direction:column;gap:12px}
-.card{background:#fff;border-radius:18px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.07)}
-.set .card{margin-bottom:12px}
-.hero{text-align:center}
-.htitle{font-size:19px;font-weight:800;margin-top:2px}
-.badge{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.04em;padding:4px 12px;border-radius:20px;background:#e6e7ea;color:#666;margin-top:8px;text-transform:uppercase}
+.rail{display:flex;flex-direction:column;gap:20px}
+.card{background:#fff;border-radius:22px;padding:24px;box-shadow:0 2px 8px rgba(20,20,40,.05)}
+.set .card{margin-bottom:18px}
+.hero{text-align:center;padding:30px 24px 26px}
+.htitle{font-size:21px;font-weight:800;letter-spacing:-.01em}
+.badge{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.06em;padding:6px 15px;border-radius:20px;background:#e9eaee;color:#6a6a74;margin-top:14px;text-transform:uppercase}
 .badge.on{background:#e3f5e8;color:#1f7a37}
-.sub{color:var(--mut);font-size:12px;margin-top:5px}
-.bikewrap{background:#eef1f4;border-radius:14px;margin:12px 0 10px;padding:14px 10px}
-.bike{display:block;margin:0 auto;width:100%;max-width:300px;height:auto}
-.hstats{display:flex;justify-content:center;align-items:center;gap:22px}
-.hstats .vr{width:1px;height:34px;background:var(--line)}
-.segs{display:flex;gap:3px;align-items:flex-end;height:26px}
-.segs i{width:7px;border-radius:2px;display:block}
-.segs i:nth-child(1){height:11px}.segs i:nth-child(2){height:15px}.segs i:nth-child(3){height:19px}
-.segs i:nth-child(4){height:23px}.segs i:nth-child(5){height:26px}
-.pct{font-size:30px;font-weight:800;line-height:1}.pct small{font-size:15px;font-weight:600;color:var(--mut)}
-.range{font-size:26px;font-weight:800}.range small{font-size:14px;color:var(--mut);font-weight:600}
-.lbl{font-size:11px;letter-spacing:.06em;color:var(--mut);text-transform:uppercase;font-weight:700;margin-bottom:6px}
-.big{font-size:26px;font-weight:800}
-.g4{display:flex;justify-content:space-between;gap:8px;margin-top:2px}
+.sub{color:var(--mut);font-size:12.5px;margin-top:9px}
+.bikewrap{background:#eef1f4;border-radius:18px;margin:24px 0 22px;padding:26px 18px}
+.bike{display:block;margin:0 auto;width:100%;max-width:340px;height:auto}
+.hstats{display:flex;justify-content:center;align-items:center;gap:32px;padding-top:4px}
+.hstats .vr{width:1px;height:42px;background:var(--line)}
+.segs{display:flex;gap:4px;align-items:flex-end;height:30px}
+.segs i{width:8px;border-radius:3px;display:block}
+.segs i:nth-child(1){height:13px}.segs i:nth-child(2){height:17px}.segs i:nth-child(3){height:21px}
+.segs i:nth-child(4){height:26px}.segs i:nth-child(5){height:30px}
+.pct{font-size:34px;font-weight:800;line-height:1}.pct small{font-size:17px;font-weight:600;color:var(--mut)}
+.range{font-size:30px;font-weight:800}.range small{font-size:15px;color:var(--mut);font-weight:600}
+.lbl{font-size:11px;letter-spacing:.08em;color:var(--mut);text-transform:uppercase;font-weight:700;margin-bottom:12px}
+.big{font-size:28px;font-weight:800;line-height:1.1}
+.g4{display:flex;justify-content:space-between;gap:12px;margin-top:4px}
 .g4 div{flex:1}
-.g4 .m{font-size:12px;font-weight:800}.g4 .v{font-size:16px;font-weight:700;margin-top:2px}.g4 .v small{font-size:11px;color:var(--mut)}
-.cbar{display:flex;height:8px;border-radius:6px;overflow:hidden;margin-top:12px;background:var(--line)}
+.g4 .m{font-size:12px;font-weight:800;letter-spacing:.03em}.g4 .v{font-size:19px;font-weight:700;margin-top:7px}.g4 .v small{font-size:11px;color:var(--mut)}
+.cbar{display:flex;height:10px;border-radius:6px;overflow:hidden;margin-top:20px;background:var(--line)}
 .cbar i{display:block;height:100%}
 .between{display:flex;justify-content:space-between;align-items:center}
-.pill{font-size:13px;font-weight:700;padding:5px 12px;border-radius:20px}
-button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:9px 14px;font-size:14px;cursor:pointer;margin:4px 6px 0 0}
-button.sec{background:#e6e7ea;color:#222}button:disabled{opacity:.5;cursor:default}
-.armbtns button{padding:8px 12px}
-.row{display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--line);border-radius:12px;margin:6px 0;cursor:pointer}
+.pill{font-size:13px;font-weight:700;padding:6px 14px;border-radius:20px}
+button{background:var(--acc);color:#fff;border:0;border-radius:12px;padding:11px 16px;font-size:14px;cursor:pointer;margin:6px 8px 0 0}
+button.sec{background:#e9eaee;color:#222}button:disabled{opacity:.5;cursor:default}
+.armbtns{margin-top:16px}.armbtns button{padding:10px 15px}
+.row{display:flex;align-items:center;gap:10px;padding:14px;border:1px solid var(--line);border-radius:14px;margin:8px 0;cursor:pointer}
 .row.sel{border-color:var(--acc);background:#e8f6fe}
 .muted{color:var(--mut);font-size:13px}.ok{color:#1f7a37;font-weight:700}.bad{color:#c62828;font-weight:700}
-.hidden{display:none}h2{font-size:16px;margin:0 0 6px}
+.hidden{display:none}h2{font-size:17px;margin:0 0 10px}.set p{margin:6px 0 14px}
 </style></head><body><div class=wrap>
 <div class=tabs>
   <button class='tab on' id=tabDash onclick="tab('dash')">Dashboard</button>
