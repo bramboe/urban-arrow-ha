@@ -1268,6 +1268,9 @@ async def main() -> None:
     await asyncio.sleep(2)
     publish_alarm(_alarm["state"])  # type: ignore[arg-type]
     await start_motion(_mqtt)
+    # One-time tracker battery read at startup so the module % is always shown
+    # (it then refreshes when the bike is on or the alarm is armed, idle otherwise).
+    asyncio.create_task(read_tracker_battery())
     await ble_loop(_mqtt)
 
 
