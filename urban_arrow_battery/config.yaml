@@ -1,5 +1,5 @@
 name: Urban Arrow Battery
-version: "2.7.0"
+version: "2.7.1"
 slug: urban_arrow_battery
 description: >-
   Reads the Urban Arrow (Bosch Smart System) eBike battery over Bluetooth and

@@ -818,6 +818,8 @@ async def ble_loop(mqtt_client: mqtt.Client) -> None:
                         _locked_addr = device.address
                         _pair_fail.clear()
                         log.info("locked onto bike %s", device.address)
+                    # Bike is on -> refresh the tracker's own battery too (low-power).
+                    await read_tracker_battery()
         except Exception as err:  # noqa: BLE001
             log.warning("cycle failed: %s: %s", type(err).__name__, err or "(timeout)")
             publish_status("Connection failed — keep the bike on, retrying…", "ON")
@@ -930,6 +932,40 @@ async def motion_watcher() -> None:
             publish_motion(False)
             _last["motion"] = False
         await asyncio.sleep(5)  # brief backoff before reconnecting
+
+
+async def read_tracker_battery() -> None:
+    """One-shot, low-power refresh of the tracker's own battery %. Used while the
+    bike is on (its main battery present, so the module is charging) and the alarm
+    isn't already holding the connection. Briefly connects, grabs a 0xC6 status
+    frame, then disconnects so the tracker can sleep again."""
+    if _tracker_off or _want_tracker():
+        return  # disabled, or the motion watcher already keeps it fresh
+    target = await find_comodule()
+    if target is None:
+        return
+    got = {"done": False}
+
+    def cb(_c, data: bytearray) -> None:
+        b = bytes(data)
+        if len(b) > 2 and b[1] == 0xC6 and 0 <= b[2] <= 100:
+            _last["tracker_battery"] = b[2]
+            if _mqtt is not None:
+                _mqtt.publish(TRACKER_TOPIC, json.dumps({"battery": b[2]}), retain=True)
+            got["done"] = True
+
+    try:
+        async with BleakClient(target, timeout=20.0) as client:
+            await client.start_notify(CHAR_155E, cb)
+            for _ in range(8):
+                await asyncio.sleep(1)
+                if got["done"]:
+                    break
+            await client.stop_notify(CHAR_155E)
+        if got["done"]:
+            log.info("tracker battery refreshed: %s%%", _last.get("tracker_battery"))
+    except Exception as err:  # noqa: BLE001
+        log.debug("tracker battery refresh failed: %s", err)
 
 
 async def start_motion(_mqtt_client: mqtt.Client) -> None:
