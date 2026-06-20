@@ -43,6 +43,14 @@ NAME_MATCH = "smart system"  # Bosch Smart System hub advertised name
 EB21 = "0000eb21-eaa2-11e9-81b4-2a2ae2dbcce4"
 FIELD_BATTERY = 10
 
+# Standard BLE Device Information Service (0x180A) — read once when connected.
+DEVICE_INFO_CHARS = {
+    "manufacturer": "00002a29-0000-1000-8000-00805f9b34fb",
+    "model": "00002a24-0000-1000-8000-00805f9b34fb",
+    "serial": "00002a25-0000-1000-8000-00805f9b34fb",
+    "firmware": "00002a26-0000-1000-8000-00805f9b34fb",
+}
+
 # Bosch push channel: notifications carry the live-selected ride mode.
 PUSH_NOTIFY = "00000011-eaa2-11e9-81b4-2a2ae2dbcce4"
 PUSH_WRITE = "00000012-eaa2-11e9-81b4-2a2ae2dbcce4"
@@ -578,6 +586,19 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
                 log.warning("read attempt %d -> %s: %s", attempt + 1, type(err).__name__, err)
                 await asyncio.sleep(2)
         mode, ranges = await read_push(client)
+        if "device_info" not in _last:  # static — read once
+            info = {}
+            for key, uuid in DEVICE_INFO_CHARS.items():
+                try:
+                    val = bytes(await client.read_gatt_char(uuid)).decode(errors="ignore").strip()
+                    if val:
+                        info[key] = val
+                except Exception:  # noqa: BLE001
+                    pass
+            if info:
+                info["name"] = device.name or ""
+                _last["device_info"] = info
+                log.info("device info: %s", info)
     if raw is None:
         log.warning("eb21 read failed (bond missing/untrusted? re-pair via bluetoothctl)")
         publish_status("Read failed — bike awake?", "ON")
@@ -838,12 +859,13 @@ let pick={bike:null,tracker:null};
 const $=s=>document.querySelector(s);
 const api=async(p,o)=>(await fetch(p,o)).json();
 const fmt=d=>`${d.address} · ${d.rssi} dBm`+(d.module_mac?` · ${d.module_mac}`:'');
-async function refresh(){const s=await api('api/status');const L=s.last||{};
+async function refresh(){const s=await api('api/status');const L=s.last||{};const di=L.device_info||{};
+  const bikeName=di.model?`${di.manufacturer||'Bosch'} ${di.model}`:(di.name||'gekoppeld');
   $('#status').innerHTML=[
    `<span class=kv>🔋 ${L.battery??'?'}%</span>`,
    `<span class=kv>⚙️ ${L.mode??'?'}</span>`,
    `<span class=kv>🛡️ ${L.alarm??'?'}</span>`,
-   `<span class=kv>🚲 ${s.bike?`<span class=ok>${s.bike}</span>`:'<span class=bad>geen fiets</span>'}</span>`,
+   `<span class=kv>🚲 ${s.bike?`<span class=ok>${bikeName}</span> <span class=muted>(${s.bike})</span>`:'<span class=bad>geen fiets</span>'}</span>`,
    `<span class=kv>📡 ${s.tracker_off?'tracker uit':(L.tracker_connected?'<span class=ok>tracker verbonden</span>':(s.tracker?s.tracker:'tracker auto'))}</span>`,
   ].join('');
   window._alarmOff=s.alarm_off;
@@ -855,7 +877,7 @@ async function scan(kind){const box=kind==='bike'?'#bikes':'#trackers';
   const list=await api('api/scan',{method:'POST'});const items=list.filter(d=>d.kind===kind);
   if(!items.length){$(box).innerHTML='<span class=muted>niets gevonden — staat het apparaat aan/in bereik?</span>';return}
   $(box).innerHTML='';items.forEach(d=>{const el=document.createElement('div');el.className='row';
-   el.textContent=(d.name||kind)+' — '+fmt(d);
+   el.innerHTML=`<div><b>${d.name||kind}</b><div class=muted style="font-size:12px">${fmt(d)}</div></div>`;
    el.onclick=()=>{pick[kind]=d;[...$(box).children].forEach(c=>c.classList.remove('sel'));el.classList.add('sel');
     $(kind==='bike'?'#bikeActions':'#trackerActions').classList.remove('hidden')};
    $(box).appendChild(el);});}
