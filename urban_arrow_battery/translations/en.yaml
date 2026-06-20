@@ -1,0 +1,29 @@
+configuration:
+  bike_address:
+    name: Bike Bluetooth address
+    description: >-
+      BLE address of the Bosch hub (e.g. A4:0D:BC:8A:41:D7). Leave empty to
+      auto-detect, or pick the bike in the Urban Arrow sidebar panel.
+  cooldown:
+    name: Read interval (seconds)
+    description: Minimum seconds between battery reads while the bike is parked.
+  comodule_address:
+    name: Tracker module MAC
+    description: >-
+      COMODULE/URBANARROW tracker module MAC (for motion). Leave empty to
+      auto-detect, or pick the tracker in the panel.
+  motion_off_delay:
+    name: Motion clear delay (seconds)
+    description: Seconds of stillness before the motion sensor turns off.
+  mqtt_host:
+    name: MQTT host
+    description: Optional MQTT broker override. Leave empty to use the Mosquitto add-on.
+  mqtt_port:
+    name: MQTT port
+    description: MQTT broker port (default 1883).
+  mqtt_user:
+    name: MQTT username
+    description: Optional MQTT username (when not using the Mosquitto add-on).
+  mqtt_pass:
+    name: MQTT password
+    description: Optional MQTT password (when not using the Mosquitto add-on).

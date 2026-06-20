@@ -1,0 +1,29 @@
+configuration:
+  bike_address:
+    name: Bluetooth-adres fiets
+    description: >-
+      BLE-adres van de Bosch-hub (bijv. A4:0D:BC:8A:41:D7). Leeg laten om
+      automatisch te detecteren, of kies de fiets in het Urban Arrow-paneel.
+  cooldown:
+    name: Leesinterval (seconden)
+    description: Minimaal aantal seconden tussen batterij-uitlezingen terwijl de fiets geparkeerd staat.
+  comodule_address:
+    name: Module-MAC tracker
+    description: >-
+      Module-MAC van de COMODULE/URBANARROW-tracker (voor beweging). Leeg laten
+      om automatisch te detecteren, of kies de tracker in het paneel.
+  motion_off_delay:
+    name: Beweging-uit vertraging (seconden)
+    description: Aantal seconden stilstand voordat de bewegingssensor uit gaat.
+  mqtt_host:
+    name: MQTT-host
+    description: Optionele MQTT-broker override. Leeg laten om de Mosquitto add-on te gebruiken.
+  mqtt_port:
+    name: MQTT-poort
+    description: Poort van de MQTT-broker (standaard 1883).
+  mqtt_user:
+    name: MQTT-gebruikersnaam
+    description: Optionele MQTT-gebruikersnaam (als je niet de Mosquitto add-on gebruikt).
+  mqtt_pass:
+    name: MQTT-wachtwoord
+    description: Optioneel MQTT-wachtwoord (als je niet de Mosquitto add-on gebruikt).
