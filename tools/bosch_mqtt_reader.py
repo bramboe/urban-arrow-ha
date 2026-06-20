@@ -927,8 +927,8 @@ button.sec{background:#e9eaee;color:#222}button:disabled{opacity:.5;cursor:defau
 .hidden{display:none}h2{font-size:17px;margin:0 0 10px}.set p{margin:6px 0 14px}
 </style></head><body><div class=wrap>
 <div class=tabs>
-  <button class='tab on' id=tabDash onclick="tab('dash')">Dashboard</button>
-  <button class=tab id=tabSet onclick="tab('set')">Instellingen</button>
+  <button class='tab on' id=tabDash data-i18n=tab_dash onclick="tab('dash')">Dashboard</button>
+  <button class=tab id=tabSet data-i18n=tab_set onclick="tab('set')">Instellingen</button>
 </div>
 
 <section id=dash class=dash>
@@ -957,37 +957,37 @@ button.sec{background:#e9eaee;color:#222}button:disabled{opacity:.5;cursor:defau
   </div>
 
   <div class='rail col-rail'>
-    <div class=card><div class=lbl>Rijmodus</div><div class=between><div class=big id=mode>—</div><span class=pill id=modePill></span></div></div>
-    <div class=card><div class=lbl>Onderhoud</div><div class=big id=service>—</div><div class=sub>tot de volgende servicebeurt</div></div>
-    <div class=card><div class=lbl>Beveiliging</div><div id=secLine class=big>—</div>
+    <div class=card><div class=lbl data-i18n=mode>Rijmodus</div><div class=between><div class=big id=mode>—</div><span class=pill id=modePill></span></div></div>
+    <div class=card><div class=lbl data-i18n=maint>Onderhoud</div><div class=big id=service>—</div><div class=sub data-i18n=maint_sub>tot de volgende servicebeurt</div></div>
+    <div class=card><div class=lbl data-i18n=security>Beveiliging</div><div id=secLine class=big>—</div>
       <div class=armbtns id=armBox></div></div>
   </div>
 
-  <div class='card col-wide'><div class=lbl>Geschat bereik per stand</div>
+  <div class='card col-wide'><div class=lbl data-i18n=ranges>Geschat bereik per stand</div>
     <div class=g4 id=ranges></div><div class=cbar id=rangeBar></div></div>
 
-  <div class='card col-wide'><div class=lbl>Kilometerstand</div><div class=big id=odo>—</div></div>
+  <div class='card col-wide'><div class=lbl data-i18n=mileage>Kilometerstand</div><div class=big id=odo>—</div></div>
 </section>
 
 <section id=set class='set hidden'>
   <div class=card>
-    <h2>1. Fiets</h2><p class=muted>Zet het display van de fiets aan en scan.</p>
-    <button onclick="scan('bike')">Scan fietsen</button><div id=bikes></div>
-    <div id=bikeActions class=hidden><button onclick="selectBike()">Selecteer deze fiets</button></div>
+    <h2 data-i18n=su_bike_h>1. Fiets</h2><p class=muted data-i18n=su_bike_p>Zet het display van de fiets aan en scan.</p>
+    <button data-i18n=scan_bikes onclick="scan('bike')">Scan fietsen</button><div id=bikes></div>
+    <div id=bikeActions class=hidden><button data-i18n=select_bike onclick="selectBike()">Selecteer deze fiets</button></div>
     <div id=pairBox class=hidden style='margin-top:8px'>
-      <p class=muted>Zet de fiets in <b>pairing mode</b> (display → nieuw apparaat koppelen), klik dan:</p>
-      <button id=pairBtn onclick="pair()">Koppel (pair)</button><span id=pairMsg></span></div>
+      <p class=muted data-i18n=su_pair_p>Zet de fiets in pairing mode (display → nieuw apparaat koppelen), klik dan:</p>
+      <button id=pairBtn data-i18n=pair_btn onclick="pair()">Koppel (pair)</button><span id=pairMsg></span></div>
   </div>
   <div class=card>
-    <h2>2. GPS-tracker <span class=muted>(anti-diefstal, optioneel)</span></h2>
-    <p class=muted>De tracker is altijd aan. Scan en kies 'm, of sla over.</p>
-    <button onclick="scan('tracker')">Scan trackers</button>
-    <button class=sec onclick="skipTracker()">Overslaan / uit</button><div id=trackers></div>
-    <div id=trackerActions class=hidden><button onclick="selectTracker()">Selecteer deze tracker</button></div>
+    <h2 data-i18n=su_tracker_h>2. GPS-tracker (anti-diefstal, optioneel)</h2>
+    <p class=muted data-i18n=su_tracker_p>De tracker is altijd aan. Scan en kies 'm, of sla over.</p>
+    <button data-i18n=scan_trackers onclick="scan('tracker')">Scan trackers</button>
+    <button class=sec data-i18n=skip onclick="skipTracker()">Overslaan / uit</button><div id=trackers></div>
+    <div id=trackerActions class=hidden><button data-i18n=select_tracker onclick="selectTracker()">Selecteer deze tracker</button></div>
   </div>
   <div class=card>
-    <h2>3. Alarm <span class=muted>(optioneel — vereist de tracker)</span></h2>
-    <p class=muted><b>Afwezig</b> = hard (push + lampen), <b>Thuis</b> = stil (alleen melding). Uit = alleen de bewegingssensor.</p>
+    <h2 data-i18n=su_alarm_h>3. Alarm (optioneel — vereist de tracker)</h2>
+    <p class=muted data-i18n=su_alarm_p>Afwezig = hard (push + lampen), Thuis = stil (alleen melding). Uit = alleen de bewegingssensor.</p>
     <button id=alarmBtn onclick="toggleAlarm()">…</button> <span id=alarmState class=muted></span>
   </div>
 </section>
@@ -996,22 +996,27 @@ button.sec{background:#e9eaee;color:#222}button:disabled{opacity:.5;cursor:defau
 const $=s=>document.querySelector(s);
 const api=async(p,o)=>(await fetch(p,o)).json();
 const post=(p,b)=>api(p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b||{})});
+const LANG=(navigator.language||'en').toLowerCase().startsWith('nl')?'nl':'en';
+const T={nl:{tab_dash:'Dashboard',tab_set:'Instellingen',mode:'Rijmodus',maint:'Onderhoud',maint_sub:'tot de volgende servicebeurt',security:'Beveiliging',ranges:'Geschat bereik per stand',mileage:'Kilometerstand',su_bike_h:'1. Fiets',su_bike_p:"Zet het display van de fiets aan en scan.",scan_bikes:'Scan fietsen',select_bike:'Selecteer deze fiets',su_pair_p:'Zet de fiets in pairing mode (display → nieuw apparaat koppelen), klik dan:',pair_btn:'Koppel (pair)',su_tracker_h:'2. GPS-tracker (anti-diefstal, optioneel)',su_tracker_p:"De tracker is altijd aan. Scan en kies 'm, of sla over.",scan_trackers:'Scan trackers',skip:'Overslaan / uit',select_tracker:'Selecteer deze tracker',su_alarm_h:'3. Alarm (optioneel — vereist de tracker)',su_alarm_p:'Afwezig = hard (push + lampen), Thuis = stil (alleen melding). Uit = alleen de bewegingssensor.',conn_on:'Verbonden',conn_off:'Niet verbonden',no_reading:'nog geen meting',up_now:'zojuist bijgewerkt',up_min:'bijgewerkt {n} min geleden',up_hour:'bijgewerkt {n} uur geleden',up_day:'bijgewerkt {n} d geleden',motion_y:'beweging',motion_n:'rustig',alarm_off:'Alarm uit',s_disarmed:'Uit',s_home:'Thuis (stil)',s_away:'Afwezig (scherp)',s_trig:'⚠️ GEACTIVEERD',a_off:'Uit',a_home:'Thuis',a_away:'Afwezig',alarm_off_hint:'Alarm staat uit (zie Instellingen)',alarm_enable:'Alarm inschakelen',alarm_disable:'Alarm uitschakelen',now_off:'momenteel uit',now_on:'momenteel aan',scanning:'scannen… (±8s)',nothing:'niets gevonden — staat het apparaat aan/in bereik?',pairing:'koppelen…',paired_ok:'Gekoppeld ✓',paired_fail:'Mislukt — staat de fiets in pairing mode?'},
+en:{tab_dash:'Dashboard',tab_set:'Settings',mode:'Ride mode',maint:'Maintenance',maint_sub:'until the next service',security:'Security',ranges:'Estimated range per mode',mileage:'Odometer',su_bike_h:'1. Bike',su_bike_p:"Turn on the bike's display and scan.",scan_bikes:'Scan bikes',select_bike:'Select this bike',su_pair_p:'Put the bike in pairing mode (display → connect a new device), then:',pair_btn:'Pair',su_tracker_h:'2. GPS tracker (anti-theft, optional)',su_tracker_p:'The tracker is always on. Scan and pick it, or skip.',scan_trackers:'Scan trackers',skip:'Skip / off',select_tracker:'Select this tracker',su_alarm_h:'3. Alarm (optional — needs the tracker)',su_alarm_p:'Away = loud (push + lights), Home = silent (notification only). Off = motion sensor only.',conn_on:'Connected',conn_off:'Not connected',no_reading:'no reading yet',up_now:'updated just now',up_min:'updated {n} min ago',up_hour:'updated {n} h ago',up_day:'updated {n} d ago',motion_y:'motion',motion_n:'still',alarm_off:'Alarm off',s_disarmed:'Off',s_home:'Home (silent)',s_away:'Away (armed)',s_trig:'⚠️ TRIGGERED',a_off:'Off',a_home:'Home',a_away:'Away',alarm_off_hint:'Alarm is off (see Settings)',alarm_enable:'Enable alarm',alarm_disable:'Disable alarm',now_off:'currently off',now_on:'currently on',scanning:'scanning… (±8s)',nothing:'nothing found — is the device on / in range?',pairing:'pairing…',paired_ok:'Paired ✓',paired_fail:'Failed — is the bike in pairing mode?'}};
+const t=(k,n)=>((T[LANG]||T.en)[k]||k).replace('{n}',n);
+function applyI18n(){document.querySelectorAll('[data-i18n]').forEach(e=>{e.textContent=t(e.dataset.i18n)});}
 const MC={Turbo:'#e2241a',Auto:'#7b3ff2','Tour+':'#1aa3e0',Tour:'#1aa3e0',Eco:'#5fb336',Off:'#8a8a8a'};
 const bcol=p=>p>40?'#37a24a':p>15?'#f59e0b':'#e53935';
 let pick={bike:null,tracker:null};
 function tab(t){$('#dash').classList.toggle('hidden',t!='dash');$('#set').classList.toggle('hidden',t!='set');
   $('#tabDash').classList.toggle('on',t=='dash');$('#tabSet').classList.toggle('on',t=='set');}
-function ago(iso){if(!iso)return '';const t=Date.parse(iso);if(isNaN(t))return '';
-  const s=Math.max(0,(Date.now()-t)/1000);
-  if(s<90)return 'zojuist bijgewerkt';if(s<3600)return 'bijgewerkt '+Math.round(s/60)+' min geleden';
-  if(s<86400)return 'bijgewerkt '+Math.round(s/3600)+' uur geleden';return 'bijgewerkt '+Math.round(s/86400)+' d geleden';}
-const fresh=iso=>{const t=Date.parse(iso);return !isNaN(t)&&(Date.now()-t)<150000;};
+function ago(iso){if(!iso)return '';const ts=Date.parse(iso);if(isNaN(ts))return '';
+  const s=Math.max(0,(Date.now()-ts)/1000);
+  if(s<90)return t('up_now');if(s<3600)return t('up_min',Math.round(s/60));
+  if(s<86400)return t('up_hour',Math.round(s/3600));return t('up_day',Math.round(s/86400));}
+const fresh=iso=>{const ts=Date.parse(iso);return !isNaN(ts)&&(Date.now()-ts)<150000;};
 async function refresh(){const s=await api('api/status');const L=s.last||{};const di=L.device_info||{};const dev=s.device||{};const R=L.range||{};
   $('#bikeTitle').textContent=L.bike_model||'Urban Arrow';
   $('#bikeSpec').textContent=['Bosch '+(di.model||dev.model||'Smart System'),L.battery_model].filter(Boolean).join(' · ');
   const f=fresh(L.last_updated);
-  $('#conn').className='badge'+(f?' on':'');$('#conn').textContent=f?'Verbonden':'Niet verbonden';
-  $('#updated').textContent=(L.last_updated?ago(L.last_updated):'nog geen meting')+(s.bike?' · '+s.bike:'');
+  $('#conn').className='badge'+(f?' on':'');$('#conn').textContent=f?t('conn_on'):t('conn_off');
+  $('#updated').textContent=(L.last_updated?ago(L.last_updated):t('no_reading'))+(s.bike?' · '+s.bike:'');
   const p=L.battery; const fill=p==null?0:Math.max(0,Math.min(5,Math.round(p/20)));
   let seg='';for(let i=0;i<5;i++)seg+=`<i style="background:${i<fill?bcol(p):'#dfe2e7'}"></i>`;$('#segs').innerHTML=seg;
   $('#pct').innerHTML=(p??'—')+'<small>%</small>';
@@ -1025,35 +1030,35 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
   $('#service').textContent=L.next_service!=null?L.next_service+' km':'—';
   $('#odo').textContent=L.odometer!=null?L.odometer.toLocaleString('nl-NL')+' km':'—';
   // security
-  const A=L.alarm; const nm={disarmed:'Uit',armed_home:'Thuis (stil)',armed_away:'Afwezig (scherp)',triggered:'⚠️ GEACTIVEERD'}[A]||'—';
-  const mv=L.motion?'beweging':'rustig';
-  $('#secLine').innerHTML=s.alarm_off?'Alarm uit · '+mv:`${nm} · ${mv}`;
-  $('#armBox').innerHTML=s.alarm_off?'<span class=muted>Alarm staat uit (zie Instellingen)</span>':
-    ['DISARM:Uit','ARM_HOME:Thuis','ARM_AWAY:Afwezig'].map(x=>{const[c,l]=x.split(':');
-     return `<button class="${(A==(c=='DISARM'?'disarmed':c=='ARM_HOME'?'armed_home':'armed_away'))?'':'sec'}" onclick="arm('${c}')">${l}</button>`}).join('');
+  const A=L.alarm; const nm={disarmed:t('s_disarmed'),armed_home:t('s_home'),armed_away:t('s_away'),triggered:t('s_trig')}[A]||'—';
+  const mv=L.motion?t('motion_y'):t('motion_n');
+  $('#secLine').innerHTML=s.alarm_off?t('alarm_off')+' · '+mv:`${nm} · ${mv}`;
+  $('#armBox').innerHTML=s.alarm_off?`<span class=muted>${t('alarm_off_hint')}</span>`:
+    [['DISARM','a_off','disarmed'],['ARM_HOME','a_home','armed_home'],['ARM_AWAY','a_away','armed_away']].map(([c,lk,st])=>
+     `<button class="${A==st?'':'sec'}" onclick="arm('${c}')">${t(lk)}</button>`).join('');
   // settings tab bits
   window._alarmOff=s.alarm_off;
-  $('#alarmBtn').textContent=s.alarm_off?'Alarm inschakelen':'Alarm uitschakelen';
-  $('#alarmState').innerHTML=s.alarm_off?'momenteel <b>uit</b>':'momenteel <span class=ok>aan</span>';}
+  $('#alarmBtn').textContent=t(s.alarm_off?'alarm_enable':'alarm_disable');
+  $('#alarmState').textContent=t(s.alarm_off?'now_off':'now_on');}
 async function arm(cmd){await post('api/alarm',{cmd});refresh()}
 async function toggleAlarm(){await post('api/set_alarm',{on:window._alarmOff===true});refresh()}
 const fmt=d=>`${d.address} · ${d.rssi} dBm`+(d.module_mac?` · ${d.module_mac}`:'');
 async function scan(kind){const box=kind=='bike'?'#bikes':'#trackers';
-  $(box).innerHTML='<span class=muted>scannen… (±8s)</span>';
+  $(box).innerHTML=`<span class=muted>${t('scanning')}</span>`;
   const list=await api('api/scan',{method:'POST'});const items=list.filter(d=>d.kind==kind);
-  if(!items.length){$(box).innerHTML='<span class=muted>niets gevonden — staat het apparaat aan/in bereik?</span>';return}
+  if(!items.length){$(box).innerHTML=`<span class=muted>${t('nothing')}</span>`;return}
   $(box).innerHTML='';items.forEach(d=>{const el=document.createElement('div');el.className='row';
    el.innerHTML=`<div><b>${d.name||kind}</b><div class=muted style="font-size:12px">${fmt(d)}</div></div>`;
    el.onclick=()=>{pick[kind]=d;[...$(box).children].forEach(c=>c.classList.remove('sel'));el.classList.add('sel');
     $(kind=='bike'?'#bikeActions':'#trackerActions').classList.remove('hidden')};
    $(box).appendChild(el);});}
 async function selectBike(){await post('api/select_bike',{address:pick.bike.address});$('#pairBox').classList.remove('hidden');refresh()}
-async function pair(){$('#pairBtn').disabled=true;$('#pairMsg').textContent=' koppelen…';
+async function pair(){$('#pairBtn').disabled=true;$('#pairMsg').textContent=' '+t('pairing');
   const r=await post('api/pair');$('#pairBtn').disabled=false;
-  $('#pairMsg').innerHTML=r.ok?' <span class=ok>Gekoppeld ✓</span>':' <span class=bad>Mislukt — staat de fiets in pairing mode?</span>';refresh()}
+  $('#pairMsg').innerHTML=r.ok?` <span class=ok>${t('paired_ok')}</span>`:` <span class=bad>${t('paired_fail')}</span>`;refresh()}
 async function selectTracker(){await post('api/select_tracker',{module_mac:pick.tracker.module_mac});refresh()}
 async function skipTracker(){await post('api/select_tracker',{off:true});refresh()}
-refresh();setInterval(refresh,5000);
+applyI18n();refresh();setInterval(refresh,5000);
 </script></body></html>"""
 
 
