@@ -824,31 +824,38 @@ INDEX_HTML = """<!doctype html><html><head><meta charset=utf-8>
 :root{--ink:#1b1b1f;--mut:#70707a;--line:#ececf0;--acc:#03a9f4}
 *{box-sizing:border-box}
 body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:#f2f3f5;color:var(--ink)}
-.wrap{max-width:520px;margin:0 auto;padding:12px 14px 28px}
-.tabs{display:flex;gap:6px;margin:4px 0 14px}
+.wrap{max-width:920px;margin:0 auto;padding:12px 14px 28px}
+.tabs{display:flex;gap:6px;margin:4px 0 14px;max-width:360px}
 .tab{flex:1;background:#e6e7ea;color:#444;border:0;border-radius:10px;padding:10px;font-size:14px;font-weight:600;cursor:pointer}
 .tab.on{background:var(--ink);color:#fff}
-.card{background:#fff;border-radius:18px;padding:16px;margin:0 0 12px;box-shadow:0 1px 3px rgba(0,0,0,.07)}
-.hero{background:linear-gradient(180deg,#fff, #f6f8fb);text-align:center}
-.htitle{font-size:18px;font-weight:700;margin-top:2px}
-.badge{display:inline-block;font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px;background:#e6e7ea;color:#555;margin-top:6px}
+.dash{display:grid;gap:12px;grid-template-columns:1fr}
+@media(min-width:720px){.dash{grid-template-columns:1.55fr 1fr;align-items:start}
+ .col-wide{grid-column:1}.col-rail{grid-column:2;grid-row:1 / span 6}}
+.rail{display:flex;flex-direction:column;gap:12px}
+.card{background:#fff;border-radius:18px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.07)}
+.set .card{margin-bottom:12px}
+.hero{text-align:center}
+.htitle{font-size:19px;font-weight:800;margin-top:2px}
+.badge{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.04em;padding:4px 12px;border-radius:20px;background:#e6e7ea;color:#666;margin-top:8px;text-transform:uppercase}
 .badge.on{background:#e3f5e8;color:#1f7a37}
-.sub{color:var(--mut);font-size:12px;margin-top:4px}
-.bike{margin:6px auto 2px;display:block}
-.hstats{display:flex;justify-content:center;align-items:center;gap:24px;margin-top:6px}
+.sub{color:var(--mut);font-size:12px;margin-top:5px}
+.bikewrap{background:#eef1f4;border-radius:14px;margin:12px 0 10px;padding:14px 10px}
+.bike{display:block;margin:0 auto;width:100%;max-width:300px;height:auto}
+.hstats{display:flex;justify-content:center;align-items:center;gap:22px}
+.hstats .vr{width:1px;height:34px;background:var(--line)}
 .segs{display:flex;gap:3px;align-items:flex-end;height:26px}
 .segs i{width:7px;border-radius:2px;display:block}
 .segs i:nth-child(1){height:11px}.segs i:nth-child(2){height:15px}.segs i:nth-child(3){height:19px}
 .segs i:nth-child(4){height:23px}.segs i:nth-child(5){height:26px}
-.pct{font-size:30px;font-weight:800;line-height:1}
-.pct small{font-size:15px;font-weight:600}
-.range{font-size:24px;font-weight:800}.range small{font-size:14px;color:var(--mut);font-weight:600}
-.lbl{font-size:12px;letter-spacing:.04em;color:var(--mut);text-transform:uppercase;font-weight:700;margin-bottom:6px}
-.big{font-size:24px;font-weight:800}
+.pct{font-size:30px;font-weight:800;line-height:1}.pct small{font-size:15px;font-weight:600;color:var(--mut)}
+.range{font-size:26px;font-weight:800}.range small{font-size:14px;color:var(--mut);font-weight:600}
+.lbl{font-size:11px;letter-spacing:.06em;color:var(--mut);text-transform:uppercase;font-weight:700;margin-bottom:6px}
+.big{font-size:26px;font-weight:800}
 .g4{display:flex;justify-content:space-between;gap:8px;margin-top:2px}
-.g4 div{flex:1;text-align:center}
-.g4 .m{font-size:12px;font-weight:800}.g4 .v{font-size:16px;font-weight:700;margin-top:2px}
-.modebar{height:8px;border-radius:6px;margin-top:12px;background:var(--line)}
+.g4 div{flex:1}
+.g4 .m{font-size:12px;font-weight:800}.g4 .v{font-size:16px;font-weight:700;margin-top:2px}.g4 .v small{font-size:11px;color:var(--mut)}
+.cbar{display:flex;height:8px;border-radius:6px;overflow:hidden;margin-top:12px;background:var(--line)}
+.cbar i{display:block;height:100%}
 .between{display:flex;justify-content:space-between;align-items:center}
 .pill{font-size:13px;font-weight:700;padding:5px 12px;border-radius:20px}
 button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:9px 14px;font-size:14px;cursor:pointer;margin:4px 6px 0 0}
@@ -864,36 +871,44 @@ button.sec{background:#e6e7ea;color:#222}button:disabled{opacity:.5;cursor:defau
   <button class=tab id=tabSet onclick="tab('set')">Instellingen</button>
 </div>
 
-<section id=dash>
-  <div class='card hero'>
+<section id=dash class=dash>
+  <div class='card hero col-wide'>
     <div class=htitle id=bikeTitle>Urban Arrow</div>
     <span class=badge id=conn>—</span>
     <div class=sub id=updated></div>
-    <svg class=bike width=220 height=96 viewBox='0 0 220 96' fill=none stroke=#cdd2da stroke-width=4>
-      <circle cx=42 cy=68 r=22 /><circle cx=178 cy=68 r=22 />
-      <path d='M42 68 L96 68 L150 30 M96 68 L150 68 L178 68 M120 68 L96 30 L150 30' stroke-linecap=round stroke-linejoin=round/>
-      <rect x=96 y=44 width=60 height=22 rx=4 fill=#e7eaef stroke=none/>
-    </svg>
+    <div class=bikewrap>
+      <svg class=bike viewBox='0 0 300 130' fill=none>
+        <g stroke=#c2c8d2 stroke-width=6><circle cx=64 cy=98 r=27 /><circle cx=244 cy=100 r=25 /></g>
+        <path d='M122 98 L122 50 L210 50 L226 98 Z' fill=#2b2e35 />
+        <rect x=150 y=70 width=44 height=7 rx=2 fill=#565b66 />
+        <g stroke=#9aa3af stroke-width=6 stroke-linecap=round stroke-linejoin=round>
+          <path d='M64 98 L112 98 L150 54' /><path d='M112 98 L226 98 L244 100' />
+          <path d='M226 98 L238 58 L250 54' /><path d='M98 98 L92 56 L106 56' />
+        </g>
+        <circle cx=112 cy=98 r=7 fill=#9aa3af />
+      </svg>
+    </div>
     <div class=hstats>
       <div style='display:flex;align-items:center;gap:10px'><div class=segs id=segs></div><div class=pct id=pct>—<small>%</small></div></div>
+      <div class=vr></div>
       <div class=range id=range>—<small> km</small></div>
     </div>
   </div>
 
-  <div class=card><div class=lbl>Rijmodus</div><div class=between><div class=big id=mode>—</div><span class=pill id=modePill></span></div></div>
+  <div class='rail col-rail'>
+    <div class=card><div class=lbl>Rijmodus</div><div class=between><div class=big id=mode>—</div><span class=pill id=modePill></span></div></div>
+    <div class=card><div class=lbl>Onderhoud</div><div class=big id=service>—</div><div class=sub>tot de volgende servicebeurt</div></div>
+    <div class=card><div class=between><div><div class=lbl>Beveiliging</div><div id=secLine class=big>—</div></div></div>
+      <div class=armbtns id=armBox style='margin-top:8px'></div></div>
+  </div>
 
-  <div class=card><div class=lbl>Geschat bereik per stand</div>
-    <div class=g4 id=ranges></div><div class=modebar></div></div>
+  <div class='card col-wide'><div class=lbl>Geschat bereik per stand</div>
+    <div class=g4 id=ranges></div><div class=cbar id=rangeBar></div></div>
 
-  <div class=card><div class=lbl>Onderhoud</div><div class=big id=service>—</div><div class=sub>tot de volgende servicebeurt</div></div>
-
-  <div class=card><div class=lbl>Kilometerstand</div><div class=big id=odo>—</div></div>
-
-  <div class=card><div class=between><div><div class=lbl>Beveiliging</div><div id=secLine class=big>—</div></div></div>
-    <div class=armbtns id=armBox style='margin-top:8px'></div></div>
+  <div class='card col-wide'><div class=lbl>Kilometerstand</div><div class=big id=odo>—</div></div>
 </section>
 
-<section id=set class=hidden>
+<section id=set class='set hidden'>
   <div class=card>
     <h2>1. Fiets</h2><p class=muted>Zet het display van de fiets aan en scan.</p>
     <button onclick="scan('bike')">Scan fietsen</button><div id=bikes></div>
@@ -943,6 +958,8 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
   if(L.mode){mp.style.display='';mp.style.background=(MC[L.mode]||'#888')+'22';mp.style.color=MC[L.mode]||'#888';mp.textContent=L.mode;}else mp.style.display='none';
   const order=[['turbo','TURBO'],['auto','AUTO'],['tour','TOUR+'],['eco','ECO']];
   $('#ranges').innerHTML=order.map(([k,n])=>`<div><div class=m style="color:${MC[n=='TOUR+'?'Tour+':n[0]+n.slice(1).toLowerCase()]||'#555'}">${n}</div><div class=v>${R[k]??'—'}<small> km</small></div></div>`).join('');
+  const rsum=order.reduce((a,[k])=>a+(R[k]||0),0)||1;
+  $('#rangeBar').innerHTML=order.map(([k,n])=>`<i style="width:${(R[k]||0)/rsum*100}%;background:${MC[n=='TOUR+'?'Tour+':n[0]+n.slice(1).toLowerCase()]||'#999'}"></i>`).join('');
   $('#service').textContent=L.next_service!=null?L.next_service+' km':'—';
   $('#odo').textContent=L.odometer!=null?L.odometer.toLocaleString('nl-NL')+' km':'—';
   // security
