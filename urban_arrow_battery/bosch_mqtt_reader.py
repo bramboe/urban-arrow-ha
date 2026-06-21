@@ -41,6 +41,7 @@ ADDRESS = os.getenv("BIKE_ADDRESS", "").strip()
 AUTO = ADDRESS == ""
 NAME_MATCH = "smart system"  # Bosch Smart System hub advertised name
 EB21 = "0000eb21-eaa2-11e9-81b4-2a2ae2dbcce4"
+EB41 = "0000eb41-eaa2-11e9-81b4-2a2ae2dbcce4"  # config: mode list + frame number
 FIELD_BATTERY = 10
 
 # Standard BLE Device Information Service (0x180A) — read once when connected.
@@ -240,6 +241,14 @@ def parse_eb21(raw: bytes) -> dict[str, int]:
     return out
 
 
+def parse_eb41_frame(raw: bytes) -> str | None:
+    """eb41 field 9 carries the frame number string, e.g. '2508179RFGP'."""
+    v = _pb_fields(raw).get(9)
+    if isinstance(v, (bytes, bytearray)) and len(v) >= 6 and all(32 <= c < 127 for c in v):
+        return bytes(v).decode()
+    return None
+
+
 def parse_mode(raw: bytes) -> str | None:
     """Return the ride mode from a Bosch push-channel notification, or None.
 
@@ -381,6 +390,7 @@ def _publish_discovery(client: mqtt.Client) -> None:
         unit_of_measurement="%", state_class="measurement")
     cfg("last_updated", "Last updated", device_class="timestamp")
     cfg("address", "Bluetooth address", icon="mdi:bluetooth", entity_category="diagnostic")
+    cfg("frame_number", "Frame number", icon="mdi:identifier", entity_category="diagnostic")
     cfg("odometer", "Odometer", device_class="distance", unit_of_measurement="km",
         state_class="total_increasing", icon="mdi:counter")
     cfg("next_service", "Next service in", unit_of_measurement="km", icon="mdi:wrench-clock")
@@ -700,6 +710,14 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
                 info["name"] = device.name or ""
                 _last["device_info"] = info
                 log.info("device info: %s", info)
+        if "frame_number" not in _last:  # static — read once from eb41
+            try:
+                fr = parse_eb41_frame(bytes(await client.read_gatt_char(EB41)))
+                if fr:
+                    _last["frame_number"] = fr
+                    log.info("frame number: %s", fr)
+            except Exception as err:  # noqa: BLE001
+                log.debug("eb41 read failed: %s", err)
     if raw is None:
         log.warning("eb21 read failed (bond missing/untrusted? re-pair via bluetoothctl)")
         publish_status("Read failed — bike awake?", "ON")
@@ -721,6 +739,8 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
         state["odometer"] = data["odometer"]
     if "next_service" in data:
         state["next_service"] = data["next_service"]
+    if _last.get("frame_number"):
+        state["frame_number"] = _last["frame_number"]
     mqtt_client.publish(STATE_TOPIC, json.dumps(state), retain=True)
     log.info("published %s", state)
     _last.update(state)
@@ -1119,7 +1139,7 @@ function ago(iso){if(!iso)return '';const ts=Date.parse(iso);if(isNaN(ts))return
 const fresh=iso=>{const ts=Date.parse(iso);return !isNaN(ts)&&(Date.now()-ts)<150000;};
 async function refresh(){const s=await api('api/status');const L=s.last||{};const di=L.device_info||{};const dev=s.device||{};const R=L.range||{};
   $('#bikeTitle').textContent=L.bike_model||'Urban Arrow Connected';
-  $('#bikeSpec').textContent=['Bosch '+(di.model||dev.model||'Smart System'),L.battery_model].filter(Boolean).join(' · ');
+  $('#bikeSpec').textContent=['Bosch '+(di.model||dev.model||'Smart System'),L.battery_model,L.frame_number&&('Frame '+L.frame_number)].filter(Boolean).join(' · ');
   const f=fresh(L.last_updated);
   $('#conn').className='badge'+(f?' on':'');$('#conn').textContent=f?t('conn_on'):t('conn_off');
   $('#updated').textContent=(L.last_updated?ago(L.last_updated):t('no_reading'))+(s.bike?' · '+s.bike:'');
