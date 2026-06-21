@@ -1,9 +1,9 @@
-# Urban Arrow Battery
+# Bosch Kiox eBike
 
-Reads the battery percentage of an **Urban Arrow** cargo bike (Bosch Smart
-System hub, BRC3600) over Bluetooth Low Energy and publishes it to Home
-Assistant via MQTT discovery. A device **Urban Arrow** appears with these
-entities:
+Reads a **Bosch Smart System** eBike (Kiox display, BRC3600 hub) over Bluetooth
+Low Energy and publishes it to Home Assistant via MQTT discovery. Tested on the
+**Urban Arrow Family Advanced Next**; other Bosch Smart System bikes are untested
+but may also work. A device appears with these entities:
 
 - **Battery** — last measured battery percentage.
 - **Odometer** — total distance ridden (km), read from the bike itself.

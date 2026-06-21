@@ -1,9 +1,12 @@
-name: Urban Arrow Battery
-version: "2.7.3"
+name: Bosch Kiox eBike
+version: "2.7.4"
 slug: urban_arrow_battery
 description: >-
-  Reads the Urban Arrow (Bosch Smart System) eBike battery over Bluetooth and
-  publishes it to Home Assistant via MQTT discovery.
+  Reads a Bosch Smart System eBike (Kiox display) over Bluetooth — battery, range
+  per mode, ride mode, odometer, next service — plus motion/anti-theft alarm and
+  tracker. Publishes to Home Assistant via MQTT discovery. Tested on the Urban
+  Arrow Family Advanced Next; other Bosch Smart System bikes are untested but may
+  also work.
 url: https://github.com/bramboe/urban-arrow-ha
 arch:
   - aarch64
