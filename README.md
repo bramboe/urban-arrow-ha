@@ -53,3 +53,10 @@ then run the reader. The on-disk bond survives reboots.
   reader cannot both be connected.
 - Battery only for now. The odometer, assist mode (Eco/Tour+/Auto/Turbo) and the
   COMODULE motion sensor are still being reverse-engineered.
+
+## Disclaimer
+
+This is an **unofficial, community-made** integration. It is **not affiliated
+with, endorsed by, or supported by Bosch eBike Systems or Urban Arrow**. Bosch,
+Kiox, Smart System and Urban Arrow are trademarks of their respective owners.
+Use is **entirely at your own risk** and without any warranty.

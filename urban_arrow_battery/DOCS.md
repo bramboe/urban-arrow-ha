@@ -76,3 +76,11 @@ pin it.
   disconnects (e.g. you walk away with the phone).
 - The bond survives reboots; no re-pairing needed unless the bike is fully
   power-cycled at the battery.
+
+## Disclaimer
+
+This is an **unofficial, community-made** integration. It is **not affiliated
+with, endorsed by, or supported by Bosch eBike Systems or Urban Arrow**. Bosch,
+Kiox, Smart System and Urban Arrow are trademarks of their respective owners.
+Use is **entirely at your own risk** and without any warranty — the author is
+not liable for any damage to your bike, battery, tracker, or data.
