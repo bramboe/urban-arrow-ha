@@ -27,6 +27,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 
 import paho.mqtt.client as mqtt
@@ -248,6 +249,48 @@ def parse_eb41_frame(raw: bytes) -> str | None:
     if isinstance(v, (bytes, bytearray)) and len(v) >= 6 and all(32 <= c < 127 for c in v):
         return bytes(v).decode()
     return None
+
+
+# Component subsystem per record attribute high byte (push 0x001e records:
+# 30 LL <attr:2> c0 80 10 0a <slen> <ascii>). Each subsystem reports its own
+# firmware (a 19.x.x string) and production date (dd.mm.yyyy).
+_COMP_GROUP = {0x20: "controller", 0x18: "drive", 0x00: "battery", 0x0d: "display"}
+_DATE_RE = re.compile(r"^\d\d\.\d\d\.\d{4}$")
+_FW_RE = re.compile(r"^19\.\d+\.\d+$")
+
+
+def parse_components(buf: bytes) -> dict:
+    """Group the Bosch component-info strings by subsystem and pull each one's
+    headline firmware (19.x.x) and production date. Returns
+    {subsystem: {firmware, date}} — names come from content matches elsewhere."""
+    by: dict[str, list[str]] = {}
+    i = 0
+    while i < len(buf) - 1:
+        if buf[i] != 0x30:
+            i += 1
+            continue
+        ln = buf[i + 1]
+        rec = buf[i + 2:i + 2 + ln]
+        i += 2 + ln
+        if len(rec) < 3:
+            continue
+        m = rec.find(b"\xc0\x80\x10\x0a")  # string marker
+        if m < 1:
+            continue
+        slen = rec[m + 4] if m + 4 < len(rec) else 0
+        s = rec[m + 5:m + 5 + slen]
+        if not s or not all(32 <= c < 127 for c in s):
+            continue
+        grp = _COMP_GROUP.get(rec[0])
+        if grp:
+            by.setdefault(grp, []).append(s.decode())
+    out: dict[str, dict] = {}
+    for grp, strs in by.items():
+        fw = next((x for x in strs if _FW_RE.match(x)), None)
+        date = next((x for x in strs if _DATE_RE.match(x)), None)
+        if fw or date:
+            out[grp] = {"firmware": fw, "date": date}
+    return out
 
 
 def parse_mode(raw: bytes) -> str | None:
@@ -627,10 +670,12 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
                                  "battery_model": None, "drive_unit": None,
                                  "display": None}
     count = {"n": 0}
+    buf = bytearray()  # full stream, for cross-frame component records
 
     def cb(_char, data: bytearray) -> None:
         count["n"] += 1
         b = bytes(data)
+        buf.extend(b)
         log.debug("push frame %d: %s", count["n"], b.hex())
         m = parse_mode(b)
         if m:
@@ -683,9 +728,13 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
                          ("drive_unit", "drive_unit"), ("display", "display")):
             if latest[src]:
                 _last[dst] = latest[src]
-        if latest["model"] or latest["battery_model"]:
-            log.info("components: battery=%s drive=%s display=%s",
-                     latest["battery_model"], latest["drive_unit"], latest["display"])
+        comps = parse_components(bytes(buf))  # per-subsystem firmware + date
+        if comps:
+            _last["components"] = {**_last.get("components", {}), **comps}
+        if latest["model"] or latest["battery_model"] or comps:
+            log.info("components: battery=%s drive=%s display=%s specs=%s",
+                     latest["battery_model"], latest["drive_unit"],
+                     latest["display"], comps)
             _save_cfg()  # persist so the specs show immediately after a restart
     except Exception as err:  # noqa: BLE001
         log.warning("push read failed: %s: %s", type(err).__name__, err)
@@ -1225,8 +1274,10 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
   const kiox=[['t_model',di.model||L.model_number],['t_frame',L.frame_number],['t_part',L.part_number||di.serial],['t_hubfw',L.hub_firmware||di.firmware],['t_addr',L.address||s.bike]];
   const gps=[['t_mac',s.tracker||L.module_mac],['t_modfw',L.module_firmware],['t_hw',L.module_hardware],['t_mfr',L.module_manufacturer],['t_batt',L.tracker_battery!=null?L.tracker_battery+'%':null]];
   $('#techInfo').innerHTML=`<div class=th>${t('tech_kiox')}</div>`+dl(kiox)+`<div class=th>${t('tech_gps')}</div>`+dl(gps);
-  // components
-  const comp=[['c_drive',L.drive_unit],['c_batt',L.battery_model],['c_disp',L.display],['c_hub',di.model||L.model_number]];
+  // components — name + firmware + production date per subsystem
+  const C=L.components||{};
+  const cv=(name,key)=>{const c=C[key]||{};const x=[name,c.firmware&&('fw '+c.firmware),c.date].filter(Boolean);return x.length?x.join(' · '):null;};
+  const comp=[['c_drive',cv(L.drive_unit,'drive')],['c_batt',cv(L.battery_model,'battery')],['c_disp',cv(L.display,'display')],['c_hub',cv(di.model||L.model_number,'controller')]];
   $('#compInfo').innerHTML=dl(comp);
   // security
   const A=L.alarm; const nm={disarmed:t('s_disarmed'),armed_home:t('s_home'),armed_away:t('s_away'),triggered:t('s_trig')}[A]||'—';
