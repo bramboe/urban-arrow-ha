@@ -984,7 +984,7 @@ async def start_motion(_mqtt_client: mqtt.Client) -> None:
 
 # ------------------------------------------------------------- setup UI (Ingress)
 INDEX_HTML = """<!doctype html><html><head><meta charset=utf-8>
-<meta name=viewport content='width=device-width,initial-scale=1'><title>Urban Arrow</title>
+<meta name=viewport content='width=device-width,initial-scale=1'><title>Bosch Kiox eBike</title>
 <style>
 :root{--bg:#f2f3f5;--card:#fff;--soft:#eef1f4;--ink:#212121;--mut:#727272;--line:#e0e0e0;--acc:#03a9f4;--chip:#e9eaee}
 @media(prefers-color-scheme:dark){:root{--bg:#111;--card:#1c1c1c;--soft:#262626;--ink:#e1e1e1;--mut:#9b9b9b;--line:#3a3a3a;--acc:#03a9f4;--chip:#2a2a2a}}
