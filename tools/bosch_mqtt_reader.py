@@ -85,11 +85,18 @@ MOTION_TOPIC = f"{NODE}/motion"
 TRACKER_TOPIC = f"{NODE}/tracker"
 ALARM_STATE_TOPIC = f"{NODE}/alarm/state"
 ALARM_CMD_TOPIC = f"{NODE}/alarm/cmd"
+LOCK_STATE_TOPIC = f"{NODE}/lock/state"
+LOCK_CMD_TOPIC = f"{NODE}/lock/cmd"
 ARMED_STATES = ("armed_away", "armed_home", "armed_night")
 
 _mqtt: "mqtt.Client | None" = None
 # Alarm state machine (HomeKit Security System via MQTT alarm_control_panel).
 _alarm: dict[str, object] = {"state": "disarmed", "restored": False, "fired": False}
+# eBike Lock: a pending ON/OFF command applied on the next bike connection, and a
+# per-write apply-trigger sequence counter (8d2f). ON = write 8d1c 0x40 (+ apply);
+# OFF = write 8d1c 0x00 (inferred — the app omits 8d1c when off). Bike must be awake.
+_lock_cmd: "str | None" = None
+_lock_seq: int = 0x30
 # Auto-detect: lock onto the first bike we successfully read, and back off bikes
 # we fail to pair with (neighbours' "smart system eBike"s), to avoid churn.
 _locked_addr: "str | None" = None
@@ -169,6 +176,13 @@ def publish_alarm(state: str) -> None:
     _last["alarm"] = state
     if _mqtt is not None:
         _mqtt.publish(ALARM_STATE_TOPIC, state, retain=True)
+
+
+def publish_lock(state: str) -> None:
+    """Publish the eBike Lock switch state (ON/OFF, retained)."""
+    _last["lock"] = state
+    if _mqtt is not None:
+        _mqtt.publish(LOCK_STATE_TOPIC, state, retain=True)
 
 
 def _want_tracker() -> bool:
@@ -340,6 +354,8 @@ def _on_connect(client, _userdata, _flags, reason, _properties=None):
     # Alarm: receive HomeKit/HA arm/disarm commands + restore the retained state.
     client.subscribe(ALARM_CMD_TOPIC)
     client.subscribe(ALARM_STATE_TOPIC)
+    client.subscribe(LOCK_CMD_TOPIC)
+    client.subscribe(LOCK_STATE_TOPIC)
     # Restore the last measurement (retained) so the UI shows it after a restart.
     client.subscribe(STATE_TOPIC)
     client.subscribe(MODE_TOPIC)
@@ -362,6 +378,15 @@ def _on_message(_client, _userdata, msg) -> None:
             _alarm["fired"] = False  # allow a fresh trigger after (re)arm/disarm
             publish_alarm(new)
             log.info("alarm command %s -> %s", payload, new)
+    elif msg.topic == LOCK_CMD_TOPIC:
+        global _lock_cmd
+        cmd = payload.upper()
+        if cmd in ("ON", "OFF"):
+            _lock_cmd = cmd  # applied on the next bike connection (bike must be awake)
+            log.info("lock command queued: %s", cmd)
+    elif msg.topic == LOCK_STATE_TOPIC and "lock" not in _last:
+        if payload in ("ON", "OFF"):
+            _last["lock"] = payload  # restore retained state on reconnect
     elif msg.topic == ALARM_STATE_TOPIC and not _alarm["restored"]:
         # First retained message after (re)connect = restore the previous state.
         _alarm["restored"] = True
@@ -475,6 +500,22 @@ def _publish_discovery(client: mqtt.Client) -> None:
         )
 
     publish_alarm_discovery(client)
+
+    # eBike Lock switch (writes to the bike's immobilizer; bike must be awake).
+    client.publish(
+        f"{DISC_PREFIX}/switch/{NODE}/lock/config",
+        json.dumps({
+            "name": "eBike Lock",
+            "unique_id": f"{NODE}_lock",
+            "command_topic": LOCK_CMD_TOPIC,
+            "state_topic": LOCK_STATE_TOPIC,
+            "payload_on": "ON",
+            "payload_off": "OFF",
+            "icon": "mdi:bike-fast",
+            "device": DEVICE,
+        }),
+        retain=True,
+    )
 
     # Status text sensor (current phase) — reads STATUS_TOPIC, not STATE_TOPIC.
     client.publish(
@@ -829,6 +870,29 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
     return True
 
 
+async def write_lock(device, on: bool) -> bool:
+    """Apply the eBike Lock setting on the (awake) bike, then trigger 'apply'.
+    ON  = attribute 8d1c = 0x40 (captured: lock on, phone unlock).
+    OFF = attribute 8d1c = 0x00 (inferred: clears the enable bit — the app omits
+          8d1c entirely when off, so no explicit off value exists in the captures).
+    Each is one attribute-addressed record (does not touch other settings),
+    followed by the 8d2f apply-settings trigger. All writes go to PUSH_WRITE."""
+    global _lock_seq
+    val = "40" if on else "00"
+    _lock_seq = (_lock_seq + 1) & 0xFF
+    seq = f"{_lock_seq:02x}"
+    async with BleakClient(device, timeout=20.0) as client:
+        # Registration header the app/read_push sends before settings traffic.
+        await client.write_gatt_char(PUSH_WRITE,
+                                     bytes.fromhex("1002010310030400f4"), response=False)
+        await client.write_gatt_char(PUSH_WRITE,
+                                     bytes.fromhex("300540808d1c" + val), response=False)
+        await client.write_gatt_char(PUSH_WRITE,
+                                     bytes.fromhex("300840808d2f" + seq + "0a0101"),
+                                     response=False)
+    return True
+
+
 def _tracker_module_mac(adv) -> "str | None":
     """The COMODULE's fixed module MAC from its advertisement (company 0x020F)."""
     raw = (adv.manufacturer_data or {}).get(0x020F)
@@ -888,13 +952,25 @@ async def find_bike(timeout: float = 15.0):
 
 async def ble_loop(mqtt_client: mqtt.Client) -> None:
     """Scan (fresh each cycle); on detection, bond if needed and read once."""
-    global _locked_addr
+    global _locked_addr, _lock_cmd
     last_ok = 0.0
     log.info("scanning (%s)", _bike_addr or "auto-detect 'smart system eBike'")
     while True:
         try:
             device = await find_bike(timeout=15.0)
             auto = _bike_addr is None
+            if device is not None and _lock_cmd is not None:
+                # A lock toggle is pending — apply it now (bike is awake/in range).
+                want_on = _lock_cmd == "ON"
+                try:
+                    if await ensure_bonded(device.address) and await write_lock(device, want_on):
+                        publish_lock("ON" if want_on else "OFF")
+                        log.info("eBike Lock set to %s", "ON" if want_on else "OFF")
+                    else:
+                        log.warning("eBike Lock write failed (not bonded?)")
+                except Exception as err:  # noqa: BLE001
+                    log.warning("lock write error: %s: %s", type(err).__name__, err)
+                _lock_cmd = None
             if device is None:
                 publish_status("Bike not found (off or out of range)", "OFF")
             elif time.time() - last_ok < COOLDOWN:
