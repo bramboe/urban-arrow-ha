@@ -1133,7 +1133,7 @@ body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:var(--bg
 .reqlink{display:inline-block;margin:14px 0 18px;font-size:12px;color:var(--mut);text-decoration:none;border:1px solid var(--line);padding:6px 13px;border-radius:18px}
 .reqlink:hover{color:var(--acc);border-color:var(--acc)}
 .bikewrap{background:#eef1f3;border-radius:12px;margin:24px 0 22px;padding:24px 18px}
-.bike{display:block;margin:0 auto;width:100%;max-width:340px;height:auto}
+.bike{display:block;margin:0 auto;width:100%;max-width:440px;height:auto}
 .hstats{display:flex;justify-content:center;align-items:center;gap:32px;padding-top:4px}
 .hstats .vr{width:1px;height:42px;background:var(--line)}
 .segs{display:flex;gap:4px;align-items:flex-end;height:30px}
