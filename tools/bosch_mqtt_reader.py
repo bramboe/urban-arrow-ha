@@ -476,7 +476,10 @@ def _on_message(_client, _userdata, msg) -> None:
         _last["motion"] = payload == "ON"
     elif msg.topic == TRACKER_TOPIC:
         try:
-            _last["tracker_battery"] = json.loads(payload).get("battery")
+            d = json.loads(payload)
+            _last["tracker_battery"] = d.get("battery")
+            if d.get("ts"):
+                _last["tracker_updated"] = d["ts"]
         except Exception:  # noqa: BLE001
             pass
 
@@ -1098,10 +1101,13 @@ async def motion_watcher() -> None:
         b = bytes(data)
         if len(b) > 2 and b[1] == 0xC6:        # COMODULE status: byte2 = its own battery %
             bat = b[2]
-            if 0 <= bat <= 100 and _last.get("tracker_battery") != bat:
-                _last["tracker_battery"] = bat
-                if _mqtt is not None:
-                    _mqtt.publish(TRACKER_TOPIC, json.dumps({"battery": bat}), retain=True)
+            if 0 <= bat <= 100:
+                _last["tracker_updated"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+                if _last.get("tracker_battery") != bat:
+                    _last["tracker_battery"] = bat
+                    if _mqtt is not None:
+                        _mqtt.publish(TRACKER_TOPIC, json.dumps(
+                            {"battery": bat, "ts": _last["tracker_updated"]}), retain=True)
         if len(b) > 1 and b[1] == FRAME_MOTION:
             now = time.time()
             state["last"] = now
@@ -1212,8 +1218,10 @@ async def _do_read_tracker_battery() -> None:
         b = bytes(data)
         if len(b) > 2 and b[1] == 0xC6 and 0 <= b[2] <= 100:
             _last["tracker_battery"] = b[2]
+            _last["tracker_updated"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
             if _mqtt is not None:
-                _mqtt.publish(TRACKER_TOPIC, json.dumps({"battery": b[2]}), retain=True)
+                _mqtt.publish(TRACKER_TOPIC, json.dumps(
+                    {"battery": b[2], "ts": _last["tracker_updated"]}), retain=True)
             got["done"] = True
 
     try:
@@ -1336,6 +1344,7 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
       <div class=sub id=lockLine style="margin-top:14px;font-size:14px"></div></div>
     <div class=card><div class=lbl data-i18n=gps>GPS-module</div>
       <div class=between><div class=big id=gpsBatt>—</div><span class=pill id=gpsConn></span></div>
+      <div class=sub id=gpsUpd></div>
       <div id=gpsInfo style="margin-top:14px"></div>
       <div style="margin-top:14px"><button class=sec id=trkBtn data-i18n=refresh_module onclick="refreshTracker()">Module-accu verversen</button></div></div>
   </div>
@@ -1431,6 +1440,7 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
   // GPS module card (rail)
   const tbv=L.tracker_battery;
   $('#gpsBatt').innerHTML=(tbv!=null?tbv:'—')+'<small>%</small>';
+  $('#gpsUpd').textContent=L.tracker_updated?ago(L.tracker_updated):t('no_reading');
   const gc=$('#gpsConn'); if(L.tracker_connected){gc.style.display='';gc.style.background='rgba(67,160,71,.18)';gc.style.color='#43a047';gc.textContent=t('gps_conn');}else gc.style.display='none';
   $('#gpsInfo').innerHTML=dl([['t_mac',s.tracker||L.module_mac],['t_modfw',L.module_firmware],['t_hw',L.module_hardware],['t_mfr',L.module_manufacturer]]);
   // security
