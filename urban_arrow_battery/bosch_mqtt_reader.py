@@ -50,6 +50,7 @@ DEVICE_INFO_CHARS = {
     "model": "00002a24-0000-1000-8000-00805f9b34fb",
     "serial": "00002a25-0000-1000-8000-00805f9b34fb",
     "firmware": "00002a26-0000-1000-8000-00805f9b34fb",
+    "hardware": "00002a27-0000-1000-8000-00805f9b34fb",
 }
 
 # Bosch push channel: notifications carry the live-selected ride mode.
@@ -879,6 +880,9 @@ async def find_comodule(timeout: float = 12.0):
         seen[device.address] = getattr(adv, "rssi", 0)
         if _tracker_mac and (_tracker_module_mac(adv) or "").upper() != _tracker_mac.upper():
             return  # not our tracker
+        # Record the stable module MAC (adv) + current BLE address for the UI.
+        _last["module_mac"] = _tracker_module_mac(adv) or _last.get("module_mac")
+        _last["tracker_addr"] = device.address
         found["device"] = device
         ev.set()
 
@@ -943,6 +947,7 @@ async def motion_watcher() -> None:
                 await client.start_notify(CHAR_155E, cb)
                 log.info("COMODULE motion watcher connected (%s)", target.address)
                 _last["tracker_connected"] = True
+                await _read_module_dis(client)  # static module specs, read once
                 while client.is_connected and _want_tracker():
                     await asyncio.sleep(1)
                     now = time.time()
@@ -980,6 +985,26 @@ async def motion_watcher() -> None:
         await asyncio.sleep(5)  # brief backoff before reconnecting
 
 
+async def _read_module_dis(client) -> None:
+    """Read the COMODULE's Device Information once -> _last module_* fields."""
+    mapping = {"module_firmware": "firmware", "module_manufacturer": "manufacturer",
+               "module_hardware": "hardware", "module_model": "model"}
+    if all(_last.get(dst) for dst in mapping):
+        return
+    for dst, key in mapping.items():
+        if _last.get(dst):
+            continue
+        try:
+            val = bytes(await client.read_gatt_char(
+                DEVICE_INFO_CHARS[key])).decode(errors="ignore").strip()
+            if val:
+                _last[dst] = val
+        except Exception:  # noqa: BLE001
+            pass
+    log.info("module info: fw=%s mfr=%s hw=%s", _last.get("module_firmware"),
+             _last.get("module_manufacturer"), _last.get("module_hardware"))
+
+
 async def read_tracker_battery() -> None:
     """One-shot, low-power refresh of the tracker's own battery %. Used while the
     bike is on (its main battery present, so the module is charging) and the alarm
@@ -1003,15 +1028,7 @@ async def read_tracker_battery() -> None:
     try:
         async with BleakClient(target, timeout=20.0) as client:
             await client.start_notify(CHAR_155E, cb)
-            if "module_firmware" not in _last:  # static — read the module's DIS once
-                try:
-                    fw = bytes(await client.read_gatt_char(
-                        DEVICE_INFO_CHARS["firmware"])).decode(errors="ignore").strip()
-                    if fw:
-                        _last["module_firmware"] = fw
-                        log.info("module firmware: %s", fw)
-                except Exception:  # noqa: BLE001
-                    pass
+            await _read_module_dis(client)  # static module specs, read once
             for _ in range(8):
                 await asyncio.sleep(1)
                 if got["done"]:
@@ -1079,6 +1096,8 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
 .warn{margin-top:12px;font-size:11.5px;color:var(--mut);line-height:1.45}
 .tech{display:grid;grid-template-columns:auto 1fr;gap:9px 18px;font-size:13.5px;margin:0}
 .tech dt{color:var(--mut)}.tech dd{margin:0;text-align:right;font-weight:600;word-break:break-all}
+.th{font-size:11px;letter-spacing:.06em;color:var(--mut);text-transform:uppercase;font-weight:700;margin:16px 0 9px}
+.th:first-child{margin-top:2px}
 .row{display:flex;align-items:center;gap:10px;padding:14px;border:1px solid var(--line);border-radius:12px;margin:8px 0;cursor:pointer}
 .row.sel{border-color:var(--acc);background:rgba(3,169,244,.12)}
 .muted{color:var(--mut);font-size:13px}.ok{color:#43a047;font-weight:700}.bad{color:#e53935;font-weight:700}
@@ -1113,7 +1132,7 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
     <div class=card><div class=lbl data-i18n=security>Beveiliging</div><div id=secLine class=big>—</div>
       <div class=armbtns id=armBox></div><div class=warn id=secWarn></div></div>
     <div class=card><div class=lbl data-i18n=tech>Technische info</div>
-      <dl class=tech id=techInfo></dl></div>
+      <div id=techInfo></div></div>
   </div>
 
   <div class='card col-wide'><div class=lbl data-i18n=ranges>Geschat bereik per stand</div>
@@ -1150,8 +1169,8 @@ const $=s=>document.querySelector(s);
 const api=async(p,o)=>(await fetch(p,o)).json();
 const post=(p,b)=>api(p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b||{})});
 const LANG=(navigator.language||'en').toLowerCase().startsWith('nl')?'nl':'en';
-const T={nl:{tab_dash:'Dashboard',tab_set:'Instellingen',mode:'Rijmodus',maint:'Onderhoud',maint_sub:'tot de volgende servicebeurt',security:'Beveiliging',ranges:'Geschat bereik per stand',mileage:'Kilometerstand',tech:'Technische info',t_model:'Model',t_frame:'Framenummer',t_part:'Onderdeelnummer',t_hubfw:'Hub-firmware',t_modfw:'Module-firmware',t_addr:'Bluetooth-adres',su_bike_h:'1. Fiets',su_bike_p:"Zet het display van de fiets aan en scan.",scan_bikes:'Scan fietsen',select_bike:'Selecteer deze fiets',su_pair_p:'Zet de fiets in pairing mode (display → nieuw apparaat koppelen), klik dan:',pair_btn:'Koppel (pair)',su_tracker_h:'2. GPS-tracker (anti-diefstal, optioneel)',su_tracker_p:"De tracker is altijd aan. Scan en kies 'm, of sla over.",scan_trackers:'Scan trackers',skip:'Overslaan / uit',select_tracker:'Selecteer deze tracker',su_alarm_h:'3. Alarm (optioneel — vereist de tracker)',su_alarm_p:'Afwezig = hard (push + lampen), Thuis = stil (alleen melding). Uit = alleen de bewegingssensor.',conn_on:'Verbonden',conn_off:'Niet verbonden',no_reading:'nog geen meting',up_now:'zojuist bijgewerkt',up_min:'bijgewerkt {n} min geleden',up_hour:'bijgewerkt {n} uur geleden',up_day:'bijgewerkt {n} d geleden',motion_y:'beweging',motion_n:'rustig',alarm_off:'Alarm uit',s_disarmed:'Uit',s_home:'Stil',s_away:'Vol alarm',s_trig:'⚠️ GEACTIVEERD',a_off:'Uit',a_home:'Stil',a_away:'Vol alarm',alarm_off_hint:'Alarm staat uit (zie Instellingen)',alarm_enable:'Alarm inschakelen',alarm_disable:'Alarm uitschakelen',now_off:'momenteel uit',now_on:'momenteel aan',scanning:'scannen… (±8s)',nothing:'niets gevonden — staat het apparaat aan/in bereik?',pairing:'koppelen…',paired_ok:'Gekoppeld ✓',paired_fail:'Mislukt — staat de fiets in pairing mode?',request_photo:'Andere fiets? Vraag je kleur/model aan',sec_warn:'⚠️ Let op: scherp zetten houdt de tracker verbonden — daardoor loopt de module-accu sneller leeg. Bij ≤20% schakelt het alarm automatisch uit.'},
-en:{tab_dash:'Dashboard',tab_set:'Settings',mode:'Ride mode',maint:'Maintenance',maint_sub:'until the next service',security:'Security',ranges:'Estimated range per mode',mileage:'Odometer',tech:'Technical info',t_model:'Model',t_frame:'Frame number',t_part:'Part number',t_hubfw:'Hub firmware',t_modfw:'Module firmware',t_addr:'Bluetooth address',su_bike_h:'1. Bike',su_bike_p:"Turn on the bike's display and scan.",scan_bikes:'Scan bikes',select_bike:'Select this bike',su_pair_p:'Put the bike in pairing mode (display → connect a new device), then:',pair_btn:'Pair',su_tracker_h:'2. GPS tracker (anti-theft, optional)',su_tracker_p:'The tracker is always on. Scan and pick it, or skip.',scan_trackers:'Scan trackers',skip:'Skip / off',select_tracker:'Select this tracker',su_alarm_h:'3. Alarm (optional — needs the tracker)',su_alarm_p:'Away = loud (push + lights), Home = silent (notification only). Off = motion sensor only.',conn_on:'Connected',conn_off:'Not connected',no_reading:'no reading yet',up_now:'updated just now',up_min:'updated {n} min ago',up_hour:'updated {n} h ago',up_day:'updated {n} d ago',motion_y:'motion',motion_n:'still',alarm_off:'Alarm off',s_disarmed:'Off',s_home:'Silent',s_away:'Full alarm',s_trig:'⚠️ TRIGGERED',a_off:'Off',a_home:'Silent',a_away:'Full alarm',alarm_off_hint:'Alarm is off (see Settings)',alarm_enable:'Enable alarm',alarm_disable:'Disable alarm',now_off:'currently off',now_on:'currently on',scanning:'scanning… (±8s)',nothing:'nothing found — is the device on / in range?',pairing:'pairing…',paired_ok:'Paired ✓',paired_fail:'Failed — is the bike in pairing mode?',request_photo:'Different bike? Request your colour & model',sec_warn:'⚠️ Note: arming keeps the tracker connected — this drains the module battery faster. At ≤20% the alarm switches off automatically.'}};
+const T={nl:{tab_dash:'Dashboard',tab_set:'Instellingen',mode:'Rijmodus',maint:'Onderhoud',maint_sub:'tot de volgende servicebeurt',security:'Beveiliging',ranges:'Geschat bereik per stand',mileage:'Kilometerstand',tech:'Technische info',tech_kiox:'Kiox (Bosch-hub)',tech_gps:'GPS-module',t_model:'Model',t_frame:'Framenummer',t_part:'Onderdeelnummer',t_hubfw:'Firmware',t_modfw:'Firmware',t_addr:'Bluetooth-adres',t_mac:'MAC-adres',t_mfr:'Fabrikant',t_hw:'Hardware',t_batt:'Module-accu',su_bike_h:'1. Fiets',su_bike_p:"Zet het display van de fiets aan en scan.",scan_bikes:'Scan fietsen',select_bike:'Selecteer deze fiets',su_pair_p:'Zet de fiets in pairing mode (display → nieuw apparaat koppelen), klik dan:',pair_btn:'Koppel (pair)',su_tracker_h:'2. GPS-tracker (anti-diefstal, optioneel)',su_tracker_p:"De tracker is altijd aan. Scan en kies 'm, of sla over.",scan_trackers:'Scan trackers',skip:'Overslaan / uit',select_tracker:'Selecteer deze tracker',su_alarm_h:'3. Alarm (optioneel — vereist de tracker)',su_alarm_p:'Afwezig = hard (push + lampen), Thuis = stil (alleen melding). Uit = alleen de bewegingssensor.',conn_on:'Verbonden',conn_off:'Niet verbonden',no_reading:'nog geen meting',up_now:'zojuist bijgewerkt',up_min:'bijgewerkt {n} min geleden',up_hour:'bijgewerkt {n} uur geleden',up_day:'bijgewerkt {n} d geleden',motion_y:'beweging',motion_n:'rustig',alarm_off:'Alarm uit',s_disarmed:'Uit',s_home:'Stil',s_away:'Vol alarm',s_trig:'⚠️ GEACTIVEERD',a_off:'Uit',a_home:'Stil',a_away:'Vol alarm',alarm_off_hint:'Alarm staat uit (zie Instellingen)',alarm_enable:'Alarm inschakelen',alarm_disable:'Alarm uitschakelen',now_off:'momenteel uit',now_on:'momenteel aan',scanning:'scannen… (±8s)',nothing:'niets gevonden — staat het apparaat aan/in bereik?',pairing:'koppelen…',paired_ok:'Gekoppeld ✓',paired_fail:'Mislukt — staat de fiets in pairing mode?',request_photo:'Andere fiets? Vraag je kleur/model aan',sec_warn:'⚠️ Let op: scherp zetten houdt de tracker verbonden — daardoor loopt de module-accu sneller leeg. Bij ≤20% schakelt het alarm automatisch uit.'},
+en:{tab_dash:'Dashboard',tab_set:'Settings',mode:'Ride mode',maint:'Maintenance',maint_sub:'until the next service',security:'Security',ranges:'Estimated range per mode',mileage:'Odometer',tech:'Technical info',tech_kiox:'Kiox (Bosch hub)',tech_gps:'GPS module',t_model:'Model',t_frame:'Frame number',t_part:'Part number',t_hubfw:'Firmware',t_modfw:'Firmware',t_addr:'Bluetooth address',t_mac:'MAC address',t_mfr:'Manufacturer',t_hw:'Hardware',t_batt:'Module battery',su_bike_h:'1. Bike',su_bike_p:"Turn on the bike's display and scan.",scan_bikes:'Scan bikes',select_bike:'Select this bike',su_pair_p:'Put the bike in pairing mode (display → connect a new device), then:',pair_btn:'Pair',su_tracker_h:'2. GPS tracker (anti-theft, optional)',su_tracker_p:'The tracker is always on. Scan and pick it, or skip.',scan_trackers:'Scan trackers',skip:'Skip / off',select_tracker:'Select this tracker',su_alarm_h:'3. Alarm (optional — needs the tracker)',su_alarm_p:'Away = loud (push + lights), Home = silent (notification only). Off = motion sensor only.',conn_on:'Connected',conn_off:'Not connected',no_reading:'no reading yet',up_now:'updated just now',up_min:'updated {n} min ago',up_hour:'updated {n} h ago',up_day:'updated {n} d ago',motion_y:'motion',motion_n:'still',alarm_off:'Alarm off',s_disarmed:'Off',s_home:'Silent',s_away:'Full alarm',s_trig:'⚠️ TRIGGERED',a_off:'Off',a_home:'Silent',a_away:'Full alarm',alarm_off_hint:'Alarm is off (see Settings)',alarm_enable:'Enable alarm',alarm_disable:'Disable alarm',now_off:'currently off',now_on:'currently on',scanning:'scanning… (±8s)',nothing:'nothing found — is the device on / in range?',pairing:'pairing…',paired_ok:'Paired ✓',paired_fail:'Failed — is the bike in pairing mode?',request_photo:'Different bike? Request your colour & model',sec_warn:'⚠️ Note: arming keeps the tracker connected — this drains the module battery faster. At ≤20% the alarm switches off automatically.'}};
 const t=(k,n)=>((T[LANG]||T.en)[k]||k).replace('{n}',n);
 function applyI18n(){document.querySelectorAll('[data-i18n]').forEach(e=>{e.textContent=t(e.dataset.i18n)});}
 const MC={Turbo:'#e2241a',Auto:'#7b3ff2','Tour+':'#1aa3e0',Tour:'#1aa3e0',Eco:'#5fb336',Off:'#8a8a8a'};
@@ -1182,9 +1201,13 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
   $('#rangeBar').innerHTML=order.map(([k,n])=>`<i style="width:${(R[k]||0)/rsum*100}%;background:${MC[n=='TOUR+'?'Tour+':n[0]+n.slice(1).toLowerCase()]||'#999'}"></i>`).join('');
   $('#service').textContent=L.next_service!=null?L.next_service+' km':'—';
   $('#odo').textContent=L.odometer!=null?L.odometer.toLocaleString('nl-NL')+' km':'—';
-  // technical info
-  const tech=[['t_model',di.model||L.model_number],['t_frame',L.frame_number],['t_part',L.part_number||di.serial],['t_hubfw',L.hub_firmware||di.firmware],['t_modfw',L.module_firmware],['t_addr',L.address||s.bike]];
-  $('#techInfo').innerHTML=tech.filter(([k,v])=>v).map(([k,v])=>`<dt>${t(k)}</dt><dd>${v}</dd>`).join('')||`<dd class=muted>${t('no_reading')}</dd>`;
+  // technical info — Kiox (Bosch hub) vs GPS module, separate devices/MACs
+  const dl=rows=>{const r=rows.filter(([k,v])=>v!=null&&v!=='');return r.length
+    ?'<dl class=tech>'+r.map(([k,v])=>`<dt>${t(k)}</dt><dd>${v}</dd>`).join('')+'</dl>'
+    :`<div class=muted style="margin:2px 0 6px">${t('no_reading')}</div>`;};
+  const kiox=[['t_model',di.model||L.model_number],['t_frame',L.frame_number],['t_part',L.part_number||di.serial],['t_hubfw',L.hub_firmware||di.firmware],['t_addr',L.address||s.bike]];
+  const gps=[['t_mac',s.tracker||L.module_mac],['t_modfw',L.module_firmware],['t_hw',L.module_hardware],['t_mfr',L.module_manufacturer],['t_batt',L.tracker_battery!=null?L.tracker_battery+'%':null]];
+  $('#techInfo').innerHTML=`<div class=th>${t('tech_kiox')}</div>`+dl(kiox)+`<div class=th>${t('tech_gps')}</div>`+dl(gps);
   // security
   const A=L.alarm; const nm={disarmed:t('s_disarmed'),armed_home:t('s_home'),armed_away:t('s_away'),triggered:t('s_trig')}[A]||'—';
   const mv=L.motion?t('motion_y'):t('motion_n');const tb=L.tracker_battery;
