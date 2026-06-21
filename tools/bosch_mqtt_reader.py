@@ -1112,15 +1112,14 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
     <div class=card><div class=lbl data-i18n=maint>Onderhoud</div><div class=big id=service>—</div><div class=sub data-i18n=maint_sub>tot de volgende servicebeurt</div></div>
     <div class=card><div class=lbl data-i18n=security>Beveiliging</div><div id=secLine class=big>—</div>
       <div class=armbtns id=armBox></div><div class=warn id=secWarn></div></div>
+    <div class=card><div class=lbl data-i18n=tech>Technische info</div>
+      <dl class=tech id=techInfo></dl></div>
   </div>
 
   <div class='card col-wide'><div class=lbl data-i18n=ranges>Geschat bereik per stand</div>
     <div class=g4 id=ranges></div><div class=cbar id=rangeBar></div></div>
 
   <div class='card col-wide'><div class=lbl data-i18n=mileage>Kilometerstand</div><div class=big id=odo>—</div></div>
-
-  <div class='card col-wide'><div class=lbl data-i18n=tech>Technische info</div>
-    <dl class=tech id=techInfo></dl></div>
 </section>
 
 <section id=set class='set hidden'>
