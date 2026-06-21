@@ -28,6 +28,13 @@ configuration:
       Uit (standaard) spaart de eigen accu van de tracker door alleen te
       verbinden wanneer het alarm scherp staat. Aan = live beweging, ook
       wanneer disarmed.
+  probe_frames:
+    name: COMODULE-probe (ontwikkelaar)
+    description: >-
+      Alleen voor ontwikkeling/diagnostiek. Logt de COMODULE 155e-statusframes en
+      houdt de tracker verbonden om signalen te reverse-engineeren (bijv. de
+      hoofdaccu-vlag). Laat de module-accu sneller leeglopen — laat UIT bij normaal
+      gebruik. Zolang 'ie aan staat verschijnt een melding in het paneel.
   mqtt_host:
     name: MQTT-host
     description: Optionele MQTT-broker override. Leeg laten om de Mosquitto add-on te gebruiken.

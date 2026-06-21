@@ -26,6 +26,13 @@ configuration:
     description: >-
       Off (default) saves the tracker's own battery by connecting only while the
       alarm is armed. Turn on for live motion even when disarmed.
+  probe_frames:
+    name: COMODULE probe (developer)
+    description: >-
+      Developer/diagnostic only. Logs the COMODULE 155e status frames and keeps
+      the tracker connected to reverse-engineer signals (e.g. the main-battery
+      flag). Drains the module battery faster — leave OFF for normal use. A banner
+      shows in the panel while it is on.
   mqtt_host:
     name: MQTT host
     description: Optional MQTT broker override. Leave empty to use the Mosquitto add-on.
