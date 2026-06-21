@@ -882,14 +882,23 @@ async def write_lock(device, on: bool) -> bool:
     _lock_seq = (_lock_seq + 1) & 0xFF
     seq = f"{_lock_seq:02x}"
     async with BleakClient(device, timeout=20.0) as client:
-        # Registration header the app/read_push sends before settings traffic.
-        await client.write_gatt_char(PUSH_WRITE,
-                                     bytes.fromhex("1002010310030400f4"), response=False)
+        # Subscribe to the push channel so the bike has a settings session, then
+        # send the FULL registration header the app sends before settings writes.
+        try:
+            await client.start_notify(PUSH_NOTIFY, lambda *_: None)
+        except Exception:  # noqa: BLE001
+            pass
+        await client.write_gatt_char(PUSH_WRITE, bytes.fromhex(
+            "1002010310030400f410020301100203021002030310020304100203051002030610020307"),
+            response=False)
+        await asyncio.sleep(0.8)
         await client.write_gatt_char(PUSH_WRITE,
                                      bytes.fromhex("300540808d1c" + val), response=False)
+        await asyncio.sleep(0.3)
         await client.write_gatt_char(PUSH_WRITE,
                                      bytes.fromhex("300840808d2f" + seq + "0a0101"),
                                      response=False)
+        await asyncio.sleep(0.5)
     return True
 
 
