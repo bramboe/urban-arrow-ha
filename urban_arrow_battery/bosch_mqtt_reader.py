@@ -85,18 +85,11 @@ MOTION_TOPIC = f"{NODE}/motion"
 TRACKER_TOPIC = f"{NODE}/tracker"
 ALARM_STATE_TOPIC = f"{NODE}/alarm/state"
 ALARM_CMD_TOPIC = f"{NODE}/alarm/cmd"
-LOCK_STATE_TOPIC = f"{NODE}/lock/state"
-LOCK_CMD_TOPIC = f"{NODE}/lock/cmd"
 ARMED_STATES = ("armed_away", "armed_home", "armed_night")
 
 _mqtt: "mqtt.Client | None" = None
 # Alarm state machine (HomeKit Security System via MQTT alarm_control_panel).
 _alarm: dict[str, object] = {"state": "disarmed", "restored": False, "fired": False}
-# eBike Lock: a pending ON/OFF command applied on the next bike connection, and a
-# per-write apply-trigger sequence counter (8d2f). ON = write 8d1c 0x40 (+ apply);
-# OFF = write 8d1c 0x00 (inferred — the app omits 8d1c when off). Bike must be awake.
-_lock_cmd: "str | None" = None
-_lock_seq: int = 0x30
 # Auto-detect: lock onto the first bike we successfully read, and back off bikes
 # we fail to pair with (neighbours' "smart system eBike"s), to avoid churn.
 _locked_addr: "str | None" = None
@@ -176,13 +169,6 @@ def publish_alarm(state: str) -> None:
     _last["alarm"] = state
     if _mqtt is not None:
         _mqtt.publish(ALARM_STATE_TOPIC, state, retain=True)
-
-
-def publish_lock(state: str) -> None:
-    """Publish the eBike Lock switch state (ON/OFF, retained)."""
-    _last["lock"] = state
-    if _mqtt is not None:
-        _mqtt.publish(LOCK_STATE_TOPIC, state, retain=True)
 
 
 def _want_tracker() -> bool:
@@ -354,8 +340,6 @@ def _on_connect(client, _userdata, _flags, reason, _properties=None):
     # Alarm: receive HomeKit/HA arm/disarm commands + restore the retained state.
     client.subscribe(ALARM_CMD_TOPIC)
     client.subscribe(ALARM_STATE_TOPIC)
-    client.subscribe(LOCK_CMD_TOPIC)
-    client.subscribe(LOCK_STATE_TOPIC)
     # Restore the last measurement (retained) so the UI shows it after a restart.
     client.subscribe(STATE_TOPIC)
     client.subscribe(MODE_TOPIC)
@@ -378,15 +362,6 @@ def _on_message(_client, _userdata, msg) -> None:
             _alarm["fired"] = False  # allow a fresh trigger after (re)arm/disarm
             publish_alarm(new)
             log.info("alarm command %s -> %s", payload, new)
-    elif msg.topic == LOCK_CMD_TOPIC:
-        global _lock_cmd
-        cmd = payload.upper()
-        if cmd in ("ON", "OFF"):
-            _lock_cmd = cmd  # applied on the next bike connection (bike must be awake)
-            log.info("lock command queued: %s", cmd)
-    elif msg.topic == LOCK_STATE_TOPIC and "lock" not in _last:
-        if payload in ("ON", "OFF"):
-            _last["lock"] = payload  # restore retained state on reconnect
     elif msg.topic == ALARM_STATE_TOPIC and not _alarm["restored"]:
         # First retained message after (re)connect = restore the previous state.
         _alarm["restored"] = True
@@ -501,21 +476,9 @@ def _publish_discovery(client: mqtt.Client) -> None:
 
     publish_alarm_discovery(client)
 
-    # eBike Lock switch (writes to the bike's immobilizer; bike must be awake).
-    client.publish(
-        f"{DISC_PREFIX}/switch/{NODE}/lock/config",
-        json.dumps({
-            "name": "eBike Lock",
-            "unique_id": f"{NODE}_lock",
-            "command_topic": LOCK_CMD_TOPIC,
-            "state_topic": LOCK_STATE_TOPIC,
-            "payload_on": "ON",
-            "payload_off": "OFF",
-            "icon": "mdi:bike-fast",
-            "device": DEVICE,
-        }),
-        retain=True,
-    )
+    # Clean up the removed eBike Lock switch (clear its retained discovery so HA
+    # drops the orphaned entity). The lock write is not possible — Ed25519-signed.
+    client.publish(f"{DISC_PREFIX}/switch/{NODE}/lock/config", "", retain=True)
 
     # Status text sensor (current phase) — reads STATUS_TOPIC, not STATE_TOPIC.
     client.publish(
@@ -870,38 +833,6 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
     return True
 
 
-async def write_lock(device, on: bool) -> bool:
-    """Apply the eBike Lock setting on the (awake) bike, then trigger 'apply'.
-    ON  = attribute 8d1c = 0x40 (captured: lock on, phone unlock).
-    OFF = attribute 8d1c = 0x00 (inferred: clears the enable bit — the app omits
-          8d1c entirely when off, so no explicit off value exists in the captures).
-    Each is one attribute-addressed record (does not touch other settings),
-    followed by the 8d2f apply-settings trigger. All writes go to PUSH_WRITE."""
-    global _lock_seq
-    val = "40" if on else "00"
-    _lock_seq = (_lock_seq + 1) & 0xFF
-    seq = f"{_lock_seq:02x}"
-    async with BleakClient(device, timeout=20.0) as client:
-        # Subscribe to the push channel so the bike has a settings session, then
-        # send the FULL registration header the app sends before settings writes.
-        try:
-            await client.start_notify(PUSH_NOTIFY, lambda *_: None)
-        except Exception:  # noqa: BLE001
-            pass
-        await client.write_gatt_char(PUSH_WRITE, bytes.fromhex(
-            "1002010310030400f410020301100203021002030310020304100203051002030610020307"),
-            response=False)
-        await asyncio.sleep(0.8)
-        await client.write_gatt_char(PUSH_WRITE,
-                                     bytes.fromhex("300540808d1c" + val), response=False)
-        await asyncio.sleep(0.3)
-        await client.write_gatt_char(PUSH_WRITE,
-                                     bytes.fromhex("300840808d2f" + seq + "0a0101"),
-                                     response=False)
-        await asyncio.sleep(0.5)
-    return True
-
-
 def _tracker_module_mac(adv) -> "str | None":
     """The COMODULE's fixed module MAC from its advertisement (company 0x020F)."""
     raw = (adv.manufacturer_data or {}).get(0x020F)
@@ -961,25 +892,13 @@ async def find_bike(timeout: float = 15.0):
 
 async def ble_loop(mqtt_client: mqtt.Client) -> None:
     """Scan (fresh each cycle); on detection, bond if needed and read once."""
-    global _locked_addr, _lock_cmd
+    global _locked_addr
     last_ok = 0.0
     log.info("scanning (%s)", _bike_addr or "auto-detect 'smart system eBike'")
     while True:
         try:
             device = await find_bike(timeout=15.0)
             auto = _bike_addr is None
-            if device is not None and _lock_cmd is not None:
-                # A lock toggle is pending — apply it now (bike is awake/in range).
-                want_on = _lock_cmd == "ON"
-                try:
-                    if await ensure_bonded(device.address) and await write_lock(device, want_on):
-                        publish_lock("ON" if want_on else "OFF")
-                        log.info("eBike Lock set to %s", "ON" if want_on else "OFF")
-                    else:
-                        log.warning("eBike Lock write failed (not bonded?)")
-                except Exception as err:  # noqa: BLE001
-                    log.warning("lock write error: %s: %s", type(err).__name__, err)
-                _lock_cmd = None
             if device is None:
                 publish_status("Bike not found (off or out of range)", "OFF")
             elif time.time() - last_ok < COOLDOWN:
@@ -1273,10 +1192,7 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
     <div class=card><div class=lbl data-i18n=mode>Rijmodus</div><div class=between><div class=big id=mode>—</div><span class=pill id=modePill></span></div></div>
     <div class=card><div class=lbl data-i18n=maint>Onderhoud</div><div class=big id=service>—</div><div class=sub data-i18n=maint_sub>tot de volgende servicebeurt</div></div>
     <div class=card><div class=lbl data-i18n=security>Beveiliging</div><div id=secLine class=big>—</div>
-      <div class=armbtns id=armBox></div><div class=warn id=secWarn></div>
-      <div class=lbl data-i18n=elock style="margin:18px 0 8px">eBike Lock</div>
-      <div id=lockState class=big style="font-size:20px">—</div>
-      <div class=armbtns id=lockBox></div><div class=warn id=lockWarn></div></div>
+      <div class=armbtns id=armBox></div><div class=warn id=secWarn></div></div>
   </div>
 
   <div class='card col-wide'><div class=lbl data-i18n=ranges>Geschat bereik per stand</div>
@@ -1324,8 +1240,8 @@ const $=s=>document.querySelector(s);
 const api=async(p,o)=>(await fetch(p,o)).json();
 const post=(p,b)=>api(p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b||{})});
 const LANG=(navigator.language||'en').toLowerCase().startsWith('nl')?'nl':'en';
-const T={nl:{tab_dash:'Dashboard',tab_more:'Meer info',tab_set:'Instellingen',components:'Componenten',about:'Over deze add-on',about_p:'Leest je Bosch Smart System eBike (Kiox) via Bluetooth uit en publiceert batterij, bereik, modus, km-stand, beurt, beweging/alarm en tracker naar Home Assistant.',about_repo:'Broncode op GitHub',c_drive:'Aandrijving',c_batt:'Accu',c_disp:'Display',c_hub:'Hub',mode:'Rijmodus',maint:'Onderhoud',maint_sub:'tot de volgende servicebeurt',security:'Beveiliging',ranges:'Geschat bereik per stand',mileage:'Kilometerstand',tech:'Technische info',tech_kiox:'Kiox (Bosch-hub)',tech_gps:'GPS-module',t_model:'Model',t_frame:'Framenummer',t_part:'Onderdeelnummer',t_hubfw:'Firmware',t_modfw:'Firmware',t_addr:'Bluetooth-adres',t_mac:'MAC-adres',t_mfr:'Fabrikant',t_hw:'Hardware',t_batt:'Module-accu',legal:'Onofficiële, door de community gemaakte integratie. Niet gelieerd aan, goedgekeurd of ondersteund door Bosch eBike Systems of Urban Arrow. Gebruik volledig op eigen risico, zonder enige garantie. Alle merknamen zijn eigendom van hun respectievelijke eigenaren.',su_bike_h:'1. Fiets',su_bike_p:"Zet het display van de fiets aan en scan.",scan_bikes:'Scan fietsen',select_bike:'Selecteer deze fiets',su_pair_p:'Zet de fiets in pairing mode (display → nieuw apparaat koppelen), klik dan:',pair_btn:'Koppel (pair)',su_tracker_h:'2. GPS-tracker (anti-diefstal, optioneel)',su_tracker_p:"De tracker is altijd aan. Scan en kies 'm, of sla over.",scan_trackers:'Scan trackers',skip:'Overslaan / uit',select_tracker:'Selecteer deze tracker',su_alarm_h:'3. Alarm (optioneel — vereist de tracker)',su_alarm_p:'Afwezig = hard (push + lampen), Thuis = stil (alleen melding). Uit = alleen de bewegingssensor.',conn_on:'Verbonden',conn_off:'Niet verbonden',no_reading:'nog geen meting',up_now:'zojuist bijgewerkt',up_min:'bijgewerkt {n} min geleden',up_hour:'bijgewerkt {n} uur geleden',up_day:'bijgewerkt {n} d geleden',motion_y:'beweging',motion_n:'rustig',alarm_off:'Alarm uit',s_disarmed:'Uit',s_home:'Stil',s_away:'Vol alarm',s_trig:'⚠️ GEACTIVEERD',a_off:'Uit',a_home:'Stil',a_away:'Vol alarm',alarm_off_hint:'Alarm staat uit (zie Instellingen)',alarm_enable:'Alarm inschakelen',alarm_disable:'Alarm uitschakelen',now_off:'momenteel uit',now_on:'momenteel aan',scanning:'scannen… (±8s)',nothing:'niets gevonden — staat het apparaat aan/in bereik?',pairing:'koppelen…',paired_ok:'Gekoppeld ✓',paired_fail:'Mislukt — staat de fiets in pairing mode?',request_photo:'Andere fiets? Vraag je kleur/model aan',sec_warn:'⚠️ Let op: scherp zetten houdt de tracker verbonden — daardoor loopt de module-accu sneller leeg. Bij ≤20% schakelt het alarm automatisch uit.',elock:'eBike Lock',lk_locked:'🔒 Vergrendeld',lk_unlocked:'🔓 Ontgrendeld',lk_unknown:'onbekend',lk_pending:'bezig…',btn_lock:'Vergrendel',btn_unlock:'Ontgrendel',lock_warn:'De fiets moet wakker/in bereik zijn; de actie wordt toegepast bij de eerstvolgende verbinding.'},
-en:{tab_dash:'Dashboard',tab_more:'More info',tab_set:'Settings',components:'Components',about:'About this add-on',about_p:'Reads your Bosch Smart System eBike (Kiox) over Bluetooth and publishes battery, range, mode, odometer, service, motion/alarm and tracker to Home Assistant.',about_repo:'Source code on GitHub',c_drive:'Drive unit',c_batt:'Battery',c_disp:'Display',c_hub:'Hub',mode:'Ride mode',maint:'Maintenance',maint_sub:'until the next service',security:'Security',ranges:'Estimated range per mode',mileage:'Odometer',tech:'Technical info',tech_kiox:'Kiox (Bosch hub)',tech_gps:'GPS module',t_model:'Model',t_frame:'Frame number',t_part:'Part number',t_hubfw:'Firmware',t_modfw:'Firmware',t_addr:'Bluetooth address',t_mac:'MAC address',t_mfr:'Manufacturer',t_hw:'Hardware',t_batt:'Module battery',legal:'Unofficial, community-made integration. Not affiliated with, endorsed by, or supported by Bosch eBike Systems or Urban Arrow. Use entirely at your own risk, without any warranty. All trademarks are the property of their respective owners.',su_bike_h:'1. Bike',su_bike_p:"Turn on the bike's display and scan.",scan_bikes:'Scan bikes',select_bike:'Select this bike',su_pair_p:'Put the bike in pairing mode (display → connect a new device), then:',pair_btn:'Pair',su_tracker_h:'2. GPS tracker (anti-theft, optional)',su_tracker_p:'The tracker is always on. Scan and pick it, or skip.',scan_trackers:'Scan trackers',skip:'Skip / off',select_tracker:'Select this tracker',su_alarm_h:'3. Alarm (optional — needs the tracker)',su_alarm_p:'Away = loud (push + lights), Home = silent (notification only). Off = motion sensor only.',conn_on:'Connected',conn_off:'Not connected',no_reading:'no reading yet',up_now:'updated just now',up_min:'updated {n} min ago',up_hour:'updated {n} h ago',up_day:'updated {n} d ago',motion_y:'motion',motion_n:'still',alarm_off:'Alarm off',s_disarmed:'Off',s_home:'Silent',s_away:'Full alarm',s_trig:'⚠️ TRIGGERED',a_off:'Off',a_home:'Silent',a_away:'Full alarm',alarm_off_hint:'Alarm is off (see Settings)',alarm_enable:'Enable alarm',alarm_disable:'Disable alarm',now_off:'currently off',now_on:'currently on',scanning:'scanning… (±8s)',nothing:'nothing found — is the device on / in range?',pairing:'pairing…',paired_ok:'Paired ✓',paired_fail:'Failed — is the bike in pairing mode?',request_photo:'Different bike? Request your colour & model',sec_warn:'⚠️ Note: arming keeps the tracker connected — this drains the module battery faster. At ≤20% the alarm switches off automatically.',elock:'eBike Lock',lk_locked:'🔒 Locked',lk_unlocked:'🔓 Unlocked',lk_unknown:'unknown',lk_pending:'working…',btn_lock:'Lock',btn_unlock:'Unlock',lock_warn:'The bike must be awake/in range; the action is applied on the next connection.'}};
+const T={nl:{tab_dash:'Dashboard',tab_more:'Meer info',tab_set:'Instellingen',components:'Componenten',about:'Over deze add-on',about_p:'Leest je Bosch Smart System eBike (Kiox) via Bluetooth uit en publiceert batterij, bereik, modus, km-stand, beurt, beweging/alarm en tracker naar Home Assistant.',about_repo:'Broncode op GitHub',c_drive:'Aandrijving',c_batt:'Accu',c_disp:'Display',c_hub:'Hub',mode:'Rijmodus',maint:'Onderhoud',maint_sub:'tot de volgende servicebeurt',security:'Beveiliging',ranges:'Geschat bereik per stand',mileage:'Kilometerstand',tech:'Technische info',tech_kiox:'Kiox (Bosch-hub)',tech_gps:'GPS-module',t_model:'Model',t_frame:'Framenummer',t_part:'Onderdeelnummer',t_hubfw:'Firmware',t_modfw:'Firmware',t_addr:'Bluetooth-adres',t_mac:'MAC-adres',t_mfr:'Fabrikant',t_hw:'Hardware',t_batt:'Module-accu',legal:'Onofficiële, door de community gemaakte integratie. Niet gelieerd aan, goedgekeurd of ondersteund door Bosch eBike Systems of Urban Arrow. Gebruik volledig op eigen risico, zonder enige garantie. Alle merknamen zijn eigendom van hun respectievelijke eigenaren.',su_bike_h:'1. Fiets',su_bike_p:"Zet het display van de fiets aan en scan.",scan_bikes:'Scan fietsen',select_bike:'Selecteer deze fiets',su_pair_p:'Zet de fiets in pairing mode (display → nieuw apparaat koppelen), klik dan:',pair_btn:'Koppel (pair)',su_tracker_h:'2. GPS-tracker (anti-diefstal, optioneel)',su_tracker_p:"De tracker is altijd aan. Scan en kies 'm, of sla over.",scan_trackers:'Scan trackers',skip:'Overslaan / uit',select_tracker:'Selecteer deze tracker',su_alarm_h:'3. Alarm (optioneel — vereist de tracker)',su_alarm_p:'Afwezig = hard (push + lampen), Thuis = stil (alleen melding). Uit = alleen de bewegingssensor.',conn_on:'Verbonden',conn_off:'Niet verbonden',no_reading:'nog geen meting',up_now:'zojuist bijgewerkt',up_min:'bijgewerkt {n} min geleden',up_hour:'bijgewerkt {n} uur geleden',up_day:'bijgewerkt {n} d geleden',motion_y:'beweging',motion_n:'rustig',alarm_off:'Alarm uit',s_disarmed:'Uit',s_home:'Stil',s_away:'Vol alarm',s_trig:'⚠️ GEACTIVEERD',a_off:'Uit',a_home:'Stil',a_away:'Vol alarm',alarm_off_hint:'Alarm staat uit (zie Instellingen)',alarm_enable:'Alarm inschakelen',alarm_disable:'Alarm uitschakelen',now_off:'momenteel uit',now_on:'momenteel aan',scanning:'scannen… (±8s)',nothing:'niets gevonden — staat het apparaat aan/in bereik?',pairing:'koppelen…',paired_ok:'Gekoppeld ✓',paired_fail:'Mislukt — staat de fiets in pairing mode?',request_photo:'Andere fiets? Vraag je kleur/model aan',sec_warn:'⚠️ Let op: scherp zetten houdt de tracker verbonden — daardoor loopt de module-accu sneller leeg. Bij ≤20% schakelt het alarm automatisch uit.'},
+en:{tab_dash:'Dashboard',tab_more:'More info',tab_set:'Settings',components:'Components',about:'About this add-on',about_p:'Reads your Bosch Smart System eBike (Kiox) over Bluetooth and publishes battery, range, mode, odometer, service, motion/alarm and tracker to Home Assistant.',about_repo:'Source code on GitHub',c_drive:'Drive unit',c_batt:'Battery',c_disp:'Display',c_hub:'Hub',mode:'Ride mode',maint:'Maintenance',maint_sub:'until the next service',security:'Security',ranges:'Estimated range per mode',mileage:'Odometer',tech:'Technical info',tech_kiox:'Kiox (Bosch hub)',tech_gps:'GPS module',t_model:'Model',t_frame:'Frame number',t_part:'Part number',t_hubfw:'Firmware',t_modfw:'Firmware',t_addr:'Bluetooth address',t_mac:'MAC address',t_mfr:'Manufacturer',t_hw:'Hardware',t_batt:'Module battery',legal:'Unofficial, community-made integration. Not affiliated with, endorsed by, or supported by Bosch eBike Systems or Urban Arrow. Use entirely at your own risk, without any warranty. All trademarks are the property of their respective owners.',su_bike_h:'1. Bike',su_bike_p:"Turn on the bike's display and scan.",scan_bikes:'Scan bikes',select_bike:'Select this bike',su_pair_p:'Put the bike in pairing mode (display → connect a new device), then:',pair_btn:'Pair',su_tracker_h:'2. GPS tracker (anti-theft, optional)',su_tracker_p:'The tracker is always on. Scan and pick it, or skip.',scan_trackers:'Scan trackers',skip:'Skip / off',select_tracker:'Select this tracker',su_alarm_h:'3. Alarm (optional — needs the tracker)',su_alarm_p:'Away = loud (push + lights), Home = silent (notification only). Off = motion sensor only.',conn_on:'Connected',conn_off:'Not connected',no_reading:'no reading yet',up_now:'updated just now',up_min:'updated {n} min ago',up_hour:'updated {n} h ago',up_day:'updated {n} d ago',motion_y:'motion',motion_n:'still',alarm_off:'Alarm off',s_disarmed:'Off',s_home:'Silent',s_away:'Full alarm',s_trig:'⚠️ TRIGGERED',a_off:'Off',a_home:'Silent',a_away:'Full alarm',alarm_off_hint:'Alarm is off (see Settings)',alarm_enable:'Enable alarm',alarm_disable:'Disable alarm',now_off:'currently off',now_on:'currently on',scanning:'scanning… (±8s)',nothing:'nothing found — is the device on / in range?',pairing:'pairing…',paired_ok:'Paired ✓',paired_fail:'Failed — is the bike in pairing mode?',request_photo:'Different bike? Request your colour & model',sec_warn:'⚠️ Note: arming keeps the tracker connected — this drains the module battery faster. At ≤20% the alarm switches off automatically.'}};
 const t=(k,n)=>((T[LANG]||T.en)[k]||k).replace('{n}',n);
 function applyI18n(){document.querySelectorAll('[data-i18n]').forEach(e=>{e.textContent=t(e.dataset.i18n)});}
 const MC={Turbo:'#e2241a',Auto:'#7b3ff2','Tour+':'#1aa3e0',Tour:'#1aa3e0',Eco:'#5fb336',Off:'#8a8a8a'};
@@ -1375,19 +1291,11 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
   $('#armBox').innerHTML=s.alarm_off?`<span class=muted>${t('alarm_off_hint')}</span>`:
     [['DISARM','a_off','disarmed'],['ARM_HOME','a_home','armed_home'],['ARM_AWAY','a_away','armed_away']].map(([c,lk,st])=>
      `<button class="${A==st?'':'sec'}" onclick="arm('${c}')">${t(lk)}</button>`).join('');
-  // eBike Lock
-  const lk=L.lock; const lkmap={ON:t('lk_locked'),OFF:t('lk_unlocked')};
-  $('#lockState').textContent=lk?lkmap[lk]:t('lk_unknown');
-  $('#lockBox').innerHTML=
-    `<button class="${lk=='ON'?'':'sec'}" onclick="lock(true)">${t('btn_lock')}</button>`+
-    `<button class="${lk=='OFF'?'':'sec'}" onclick="lock(false)">${t('btn_unlock')}</button>`;
-  $('#lockWarn').textContent=t('lock_warn');
   // settings tab bits
   window._alarmOff=s.alarm_off;
   $('#alarmBtn').textContent=t(s.alarm_off?'alarm_enable':'alarm_disable');
   $('#alarmState').textContent=t(s.alarm_off?'now_off':'now_on');}
 async function arm(cmd){await post('api/alarm',{cmd});refresh()}
-async function lock(on){await post('api/lock',{on});$('#lockState').textContent=t('lk_pending');refresh()}
 async function toggleAlarm(){await post('api/set_alarm',{on:window._alarmOff===true});refresh()}
 const fmt=d=>`${d.address} · ${d.rssi} dBm`+(d.module_mac?` · ${d.module_mac}`:'');
 async function scan(kind){const box=kind=='bike'?'#bikes':'#trackers';
@@ -1444,14 +1352,6 @@ async def _ui_alarm(request):
     return web.json_response({"ok": True, "state": new})
 
 
-async def _ui_lock(request):
-    global _lock_cmd
-    data = await request.json()
-    _lock_cmd = "ON" if data.get("on") else "OFF"
-    log.info("UI: lock command queued: %s", _lock_cmd)
-    return web.json_response({"ok": True, "queued": _lock_cmd})
-
-
 async def _ui_scan(_request):
     try:
         async with _scan_lock, BleakScanner(detection_callback=_record):
@@ -1506,7 +1406,6 @@ async def start_web() -> None:
         web.post("/api/select_tracker", _ui_select_tracker),
         web.post("/api/set_alarm", _ui_set_alarm),
         web.post("/api/alarm", _ui_alarm),
-        web.post("/api/lock", _ui_lock),
     ])
     runner = web.AppRunner(app)
     await runner.setup()
