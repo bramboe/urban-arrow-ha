@@ -4,6 +4,13 @@ configuration:
     description: >-
       BLE-adres van de Bosch-hub (bijv. A4:0D:BC:8A:41:D7). Leeg laten om
       automatisch te detecteren, of kies de fiets in het Bosch Kiox eBike-paneel.
+  bike_model:
+    name: Fietsmodel-naam
+    description: >-
+      Naam die als titel in het paneel wordt getoond. Leeg laten voor "Urban
+      Arrow Connected". Het marketingmodel wordt niet via Bluetooth verzonden,
+      dus geef hier desgewenst je eigen naam op (bijv. "Urban Arrow Family
+      Advanced Next").
   cooldown:
     name: Leesinterval (seconden)
     description: Minimaal aantal seconden tussen batterij-uitlezingen terwijl de fiets geparkeerd staat.

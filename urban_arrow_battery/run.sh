@@ -2,6 +2,11 @@
 # shellcheck shell=bash
 
 export BIKE_ADDRESS="$(bashio::config 'bike_address')"
+if bashio::config.has_value 'bike_model'; then
+    export BIKE_MODEL="$(bashio::config 'bike_model')"
+else
+    export BIKE_MODEL=""
+fi
 export COOLDOWN="$(bashio::config 'cooldown')"
 
 # MQTT: use the configured override, else the Home Assistant MQTT service.

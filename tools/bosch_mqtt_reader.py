@@ -135,8 +135,12 @@ _tracker_always: bool = os.getenv("TRACKER_ALWAYS", "0") == "1"
 _discovered: dict[str, dict] = {}
 # Last known values, for the setup UI status panel.
 _last: dict[str, object] = {}
-if _cfg0.get("bike_model"):
-    _last["bike_model"] = _cfg0["bike_model"]
+# Marketing model name is NOT broadcast over BLE (it lives in the Urban Arrow
+# account/cloud), so it is config-driven: the optional bike_model option wins,
+# otherwise default to "Urban Arrow Connected".
+_model_name: str = (os.getenv("BIKE_MODEL", "").strip()
+                    or _cfg0.get("bike_model") or "Urban Arrow Connected")
+_last["bike_model"] = _model_name
 if _cfg0.get("battery_model"):
     _last["battery_model"] = _cfg0["battery_model"]
 # Serialise BLE scans: the reader loop, tracker locate, and UI scans must not run
@@ -654,8 +658,8 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
         await client.stop_notify(PUSH_NOTIFY)
         log.debug("push channel: %d frame(s), mode=%s range=%s",
                   count["n"], latest["mode"], latest["range"])
-        if latest["model"]:
-            _last["bike_model"] = latest["model"]
+        # NB: bike_model is config-driven (_model_name), not taken from the BLE
+        # component string (which only ever yields the generic "Urban Arrow").
         if latest["battery_model"]:
             _last["battery_model"] = latest["battery_model"]
         if latest["model"] or latest["battery_model"]:
@@ -1114,7 +1118,7 @@ function ago(iso){if(!iso)return '';const ts=Date.parse(iso);if(isNaN(ts))return
   if(s<86400)return t('up_hour',Math.round(s/3600));return t('up_day',Math.round(s/86400));}
 const fresh=iso=>{const ts=Date.parse(iso);return !isNaN(ts)&&(Date.now()-ts)<150000;};
 async function refresh(){const s=await api('api/status');const L=s.last||{};const di=L.device_info||{};const dev=s.device||{};const R=L.range||{};
-  $('#bikeTitle').textContent=L.bike_model||'Urban Arrow';
+  $('#bikeTitle').textContent=L.bike_model||'Urban Arrow Connected';
   $('#bikeSpec').textContent=['Bosch '+(di.model||dev.model||'Smart System'),L.battery_model].filter(Boolean).join(' · ');
   const f=fresh(L.last_updated);
   $('#conn').className='badge'+(f?' on':'');$('#conn').textContent=f?t('conn_on'):t('conn_off');

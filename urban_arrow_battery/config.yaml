@@ -1,5 +1,5 @@
 name: Bosch Kiox eBike
-version: "2.7.6"
+version: "2.7.7"
 slug: urban_arrow_battery
 description: >-
   Reads a Bosch Smart System eBike (Kiox display) over Bluetooth — battery, range
@@ -24,6 +24,7 @@ services:
   - mqtt:want
 options:
   bike_address: ""
+  bike_model: ""
   cooldown: 120
   comodule_address: ""
   motion_off_delay: 12
@@ -35,6 +36,8 @@ options:
 schema:
   # Leave bike_address empty to auto-detect the hub (advertised "smart system eBike").
   bike_address: str?
+  # Display name shown in the panel hero. Empty = "Urban Arrow Connected".
+  bike_model: str?
   cooldown: int
   # COMODULE/URBANARROW motion tracker. Empty = auto-detect by name. Seconds of
   # stillness before motion clears.
