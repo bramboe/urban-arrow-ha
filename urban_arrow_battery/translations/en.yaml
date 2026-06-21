@@ -5,11 +5,11 @@ configuration:
       BLE address of the Bosch hub (e.g. A4:0D:BC:8A:41:D7). Leave empty to
       auto-detect, or pick the bike in the Bosch Kiox eBike sidebar panel.
   bike_model:
-    name: Bike model name
+    name: Bike name / brand
     description: >-
-      Name shown as the title in the panel. Leave empty for "Urban Arrow
-      Connected". The marketing model is not broadcast over Bluetooth, so set
-      your own here (e.g. "Urban Arrow Family Advanced Next").
+      Shown as the title in the panel. Leave empty to use the bike's reported
+      manufacturer (e.g. "Bosch eBike Systems"). The bike brand/model is not
+      broadcast over Bluetooth, so set your own here (e.g. "Urban Arrow").
   cooldown:
     name: Read interval (seconds)
     description: Minimum seconds between battery reads while the bike is parked.

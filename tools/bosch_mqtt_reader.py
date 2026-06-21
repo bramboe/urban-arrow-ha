@@ -138,12 +138,14 @@ _tracker_always: bool = os.getenv("TRACKER_ALWAYS", "0") == "1"
 _discovered: dict[str, dict] = {}
 # Last known values, for the setup UI status panel.
 _last: dict[str, object] = {}
-# Marketing model name is NOT broadcast over BLE (it lives in the Urban Arrow
-# account/cloud), so it is config-driven: the optional bike_model option wins,
-# otherwise default to "Urban Arrow Connected".
+# The bike's brand/model is NOT broadcast over BLE (it lives in the maker's
+# account/cloud), so the panel title is config-driven: the optional bike_model
+# option wins; otherwise the page falls back to the bike's Device-Information
+# manufacturer (e.g. "Bosch eBike Systems"). No hardcoded brand here.
 _model_name: str = (os.getenv("BIKE_MODEL", "").strip()
-                    or _cfg0.get("bike_model") or "Urban Arrow Connected")
-_last["bike_model"] = _model_name
+                    or _cfg0.get("bike_model") or "").strip()
+if _model_name:
+    _last["bike_model"] = _model_name
 if _cfg0.get("battery_model"):
     _last["battery_model"] = _cfg0["battery_model"]
 # Serialise BLE scans: the reader loop, tracker locate, and UI scans must not run
@@ -1173,7 +1175,7 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
 
 <section id=dash class=dash>
   <div class='card hero col-wide'>
-    <div class=htitle id=bikeTitle>Urban Arrow</div>
+    <div class=htitle id=bikeTitle>Bosch eBike</div>
     <div class=sub id=bikeSpec></div>
     <span class=badge id=conn>—</span>
     <div class=bikewrap>
@@ -1255,7 +1257,7 @@ function ago(iso){if(!iso)return '';const ts=Date.parse(iso);if(isNaN(ts))return
   if(s<86400)return t('up_hour',Math.round(s/3600));return t('up_day',Math.round(s/86400));}
 const fresh=iso=>{const ts=Date.parse(iso);return !isNaN(ts)&&(Date.now()-ts)<150000;};
 async function refresh(){const s=await api('api/status');const L=s.last||{};const di=L.device_info||{};const dev=s.device||{};const R=L.range||{};
-  $('#bikeTitle').textContent=L.bike_model||'Urban Arrow Connected';
+  $('#bikeTitle').textContent=L.bike_model||di.manufacturer||dev.manufacturer||'Bosch eBike';
   $('#bikeSpec').textContent=L.last_updated?ago(L.last_updated):t('no_reading');
   const f=fresh(L.last_updated);
   $('#conn').className='badge'+(f?' on':'');$('#conn').textContent=f?t('conn_on'):t('conn_off');
