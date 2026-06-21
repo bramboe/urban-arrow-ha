@@ -164,6 +164,15 @@ _alarm_off: bool = bool(_cfg0.get("alarm_off", False))
 # it connected always (live motion even when disarmed).
 _tracker_always: bool = os.getenv("TRACKER_ALWAYS", "0") == "1"
 
+# TEMPORARY PROBE: log the full hex of every COMODULE 155e status frame whenever
+# its content changes (excluding the high-rate motion/sensor frames). Used to find
+# which byte flips when the bike's MAIN battery is pulled out / put back in, while
+# the module stays powered. Keeps the tracker connected without arming the alarm.
+_probe_frames: bool = os.getenv("PROBE_FRAMES", "0") == "1"
+# Frame types that flood continuously (motion burst / ~1s sensor) — never probed.
+_PROBE_SKIP = (0xD1, 0xC8)
+_probe_last: dict[int, bytes] = {}
+
 # Devices seen during scans, for the setup UI: address -> {name,rssi,kind,module_mac,ts}.
 _discovered: dict[str, dict] = {}
 # Last known values, for the setup UI status panel.
@@ -219,7 +228,7 @@ def _want_tracker() -> bool:
     armed, unless tracker_always is set (and never if the tracker is disabled)."""
     if _tracker_off:
         return False
-    if _tracker_always:
+    if _tracker_always or _probe_frames:
         return True
     return not _alarm_off and _alarm["state"] in (ARMED_STATES + ("triggered",))
 
@@ -1096,6 +1105,10 @@ async def motion_watcher() -> None:
 
     def cb(_c, data: bytearray) -> None:
         b = bytes(data)
+        if _probe_frames and len(b) >= 2 and b[1] not in _PROBE_SKIP:
+            if _probe_last.get(b[1]) != b:   # log each distinct status frame once
+                _probe_last[b[1]] = b
+                log.info("PROBE 155e frame %02X (%dB): %s", b[1], len(b), b.hex())
         if len(b) > 2 and b[1] == 0xC6:        # COMODULE status: byte2 = its own battery %
             bat = b[2]
             if 0 <= bat <= 100 and _last.get("tracker_battery") != bat:
