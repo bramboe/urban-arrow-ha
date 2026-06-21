@@ -1034,11 +1034,15 @@ async def find_comodule(timeout: float = 12.0):
     found: dict[str, object] = {}
     seen: dict[str, int] = {}
     ev = asyncio.Event()
+    mfr: dict[str, str] = {}
 
     def cb(device, adv) -> None:
         if _record(device, adv) != "tracker":
             return
         seen[device.address] = getattr(adv, "rssi", 0)
+        raw = (adv.manufacturer_data or {}).get(0x020F)
+        if raw:  # log full adv payload once — to check if battery is broadcast
+            mfr[device.address] = bytes(raw).hex()
         if _tracker_mac and (_tracker_module_mac(adv) or "").upper() != _tracker_mac.upper():
             return  # not our tracker
         # Record the stable module MAC (adv) + current BLE address for the UI.
@@ -1056,6 +1060,8 @@ async def find_comodule(timeout: float = 12.0):
     if seen:
         log.info("comodule scan: trackers seen: %s",
                  ", ".join(f"{a}@{r}dBm" for a, r in seen.items()))
+        for a, hx in mfr.items():
+            log.info("comodule adv 0x020F [%s]: %s", a, hx)
     else:
         log.info("comodule scan: no URBANARROW tracker heard by the local adapter")
     return found.get("device")
