@@ -1,0 +1,9 @@
+{
+  "_comment": "Bosch eBike base SKU / product code -> friendly product name + colour. The bike broadcasts its article code (e.g. BUA0652) and product code over BLE, but NOT the marketing name or colour, so they are looked up here. Add your bike via a GitHub issue/PR: key by the article code shown in the panel (Technical info).",
+  "skus": {
+    "BUA0652": { "name": "Urban Arrow Family Advanced Next", "color": "Black" }
+  },
+  "product_codes": {
+    "PON-SMA-URBANARROW": { "name": "Urban Arrow" }
+  }
+}
