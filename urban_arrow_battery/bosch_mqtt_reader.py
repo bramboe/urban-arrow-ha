@@ -115,6 +115,7 @@ def _save_cfg() -> None:
             json.dump({"bike": _bike_addr, "tracker": _tracker_mac,
                        "tracker_off": _tracker_off, "alarm_off": _alarm_off,
                        "bike_model": _last.get("bike_model"),
+                       "bike_brand": _last.get("bike_brand"),
                        "battery_model": _last.get("battery_model")}, fh)
     except Exception as err:  # noqa: BLE001
         log.warning("save config: %s", err)
@@ -146,6 +147,8 @@ _model_name: str = (os.getenv("BIKE_MODEL", "").strip()
                     or _cfg0.get("bike_model") or "").strip()
 if _model_name:
     _last["bike_model"] = _model_name
+if _cfg0.get("bike_brand"):
+    _last["bike_brand"] = _cfg0["bike_brand"]
 if _cfg0.get("battery_model"):
     _last["battery_model"] = _cfg0["battery_model"]
 # Serialise BLE scans: the reader loop, tracker locate, and UI scans must not run
@@ -259,6 +262,29 @@ def parse_eb41_frame(raw: bytes) -> str | None:
 _COMP_GROUP = {0x20: "controller", 0x18: "drive", 0x00: "battery", 0x0d: "display"}
 _DATE_RE = re.compile(r"^\d\d\.\d\d\.\d{4}$")
 _FW_RE = re.compile(r"^19\.\d+\.\d+$")
+
+
+def _comp_string(buf: bytes, attr2: int) -> "str | None":
+    """Return the ASCII string of the component record with the given 2-byte
+    attribute (record: 30 LL <attr2> c0 80 <Y> 0a <len> <ascii>)."""
+    hi, lo = attr2 >> 8, attr2 & 0xFF
+    i = 0
+    while i < len(buf) - 1:
+        if buf[i] != 0x30:
+            i += 1
+            continue
+        ln = buf[i + 1]
+        rec = buf[i + 2:i + 2 + ln]
+        i += 2 + ln
+        if len(rec) < 5 or rec[0] != hi or rec[1] != lo:
+            continue
+        m = rec.find(0x0A, 2)
+        if m < 0 or m + 1 >= len(rec):
+            continue
+        s = rec[m + 2:m + 2 + rec[m + 1]]
+        if s and all(32 <= c < 127 for c in s):
+            return s.decode()
+    return None
 
 
 def parse_components(buf: bytes) -> dict:
@@ -728,18 +754,22 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
         await client.stop_notify(PUSH_NOTIFY)
         log.debug("push channel: %d frame(s), mode=%s range=%s",
                   count["n"], latest["mode"], latest["range"])
-        # NB: bike_model is config-driven (_model_name), not taken from the BLE
-        # component string (which only ever yields the generic "Urban Arrow").
         for src, dst in (("battery_model", "battery_model"),
                          ("drive_unit", "drive_unit"), ("display", "display")):
             if latest[src]:
                 _last[dst] = latest[src]
+        # Bike brand from the component info (attr 186c, e.g. "Urban Arrow") — the
+        # actual brand IS in the BLE push stream. Used as the panel title unless a
+        # bike_model is configured. Read from the bike, generic across brands.
+        brand = _comp_string(bytes(buf), 0x186C)
+        if brand:
+            _last["bike_brand"] = brand
         comps = parse_components(bytes(buf))  # per-subsystem firmware + date
         if comps:
             _last["components"] = {**_last.get("components", {}), **comps}
-        if latest["model"] or latest["battery_model"] or comps:
-            log.info("components: battery=%s drive=%s display=%s specs=%s",
-                     latest["battery_model"], latest["drive_unit"],
+        if brand or latest["battery_model"] or comps:
+            log.info("components: brand=%s battery=%s drive=%s display=%s specs=%s",
+                     brand, latest["battery_model"], latest["drive_unit"],
                      latest["display"], comps)
             _save_cfg()  # persist so the specs show immediately after a restart
     except Exception as err:  # noqa: BLE001
@@ -1257,7 +1287,7 @@ function ago(iso){if(!iso)return '';const ts=Date.parse(iso);if(isNaN(ts))return
   if(s<86400)return t('up_hour',Math.round(s/3600));return t('up_day',Math.round(s/86400));}
 const fresh=iso=>{const ts=Date.parse(iso);return !isNaN(ts)&&(Date.now()-ts)<150000;};
 async function refresh(){const s=await api('api/status');const L=s.last||{};const di=L.device_info||{};const dev=s.device||{};const R=L.range||{};
-  $('#bikeTitle').textContent=L.bike_model||di.manufacturer||dev.manufacturer||'Bosch eBike';
+  $('#bikeTitle').textContent=L.bike_model||L.bike_brand||di.manufacturer||dev.manufacturer||'Bosch eBike';
   $('#bikeSpec').textContent=L.last_updated?ago(L.last_updated):t('no_reading');
   const f=fresh(L.last_updated);
   $('#conn').className='badge'+(f?' on':'');$('#conn').textContent=f?t('conn_on'):t('conn_off');
