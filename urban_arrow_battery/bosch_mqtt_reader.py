@@ -1113,7 +1113,6 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
     <div class=htitle id=bikeTitle>Urban Arrow</div>
     <div class=sub id=bikeSpec></div>
     <span class=badge id=conn>—</span>
-    <div class=sub id=updated></div>
     <div class=bikewrap>
       <img class=bike src="bike.png" alt="Urban Arrow Family" />
     </div>
@@ -1185,10 +1184,9 @@ function ago(iso){if(!iso)return '';const ts=Date.parse(iso);if(isNaN(ts))return
 const fresh=iso=>{const ts=Date.parse(iso);return !isNaN(ts)&&(Date.now()-ts)<150000;};
 async function refresh(){const s=await api('api/status');const L=s.last||{};const di=L.device_info||{};const dev=s.device||{};const R=L.range||{};
   $('#bikeTitle').textContent=L.bike_model||'Urban Arrow Connected';
-  $('#bikeSpec').textContent=['Bosch '+(di.model||dev.model||'Smart System'),L.battery_model,L.frame_number&&('Frame '+L.frame_number)].filter(Boolean).join(' · ');
+  $('#bikeSpec').textContent=L.last_updated?ago(L.last_updated):t('no_reading');
   const f=fresh(L.last_updated);
   $('#conn').className='badge'+(f?' on':'');$('#conn').textContent=f?t('conn_on'):t('conn_off');
-  $('#updated').textContent=(L.last_updated?ago(L.last_updated):t('no_reading'))+(s.bike?' · '+s.bike:'');
   const p=L.battery; const fill=p==null?0:Math.max(0,Math.min(5,Math.round(p/20)));
   let seg='';for(let i=0;i<5;i++)seg+=`<i style="background:${i<fill?bcol(p):'#dfe2e7'}"></i>`;$('#segs').innerHTML=seg;
   $('#pct').innerHTML=(p??'—')+'<small>%</small>';
