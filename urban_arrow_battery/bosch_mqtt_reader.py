@@ -623,8 +623,9 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
     (so the bike pushes the mode (9809) and range (9857) attributes), listens
     briefly, and returns (mode, ranges). Either may be None if nothing arrived.
     """
-    latest: dict[str, object] = {"mode": None, "range": None,
-                                 "model": None, "battery_model": None}
+    latest: dict[str, object] = {"mode": None, "range": None, "model": None,
+                                 "battery_model": None, "drive_unit": None,
+                                 "display": None}
     count = {"n": 0}
 
     def cb(_char, data: bytearray) -> None:
@@ -642,6 +643,10 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
                 latest["model"] = svalue
             elif svalue.startswith("PowerPack"):
                 latest["battery_model"] = svalue.replace(" Frame", "").strip()
+            elif "Performance Line" in svalue or "Drive Unit" in svalue:
+                latest["drive_unit"] = svalue.replace("Drive Unit", "").strip() or svalue
+            elif svalue.startswith("Kiox") or svalue.startswith("Nyon") or "Purion" in svalue:
+                latest["display"] = svalue
 
     try:
         for attempt in range(2):  # tolerate a "service discovery not done yet" race
@@ -674,11 +679,14 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
                   count["n"], latest["mode"], latest["range"])
         # NB: bike_model is config-driven (_model_name), not taken from the BLE
         # component string (which only ever yields the generic "Urban Arrow").
-        if latest["battery_model"]:
-            _last["battery_model"] = latest["battery_model"]
+        for src, dst in (("battery_model", "battery_model"),
+                         ("drive_unit", "drive_unit"), ("display", "display")):
+            if latest[src]:
+                _last[dst] = latest[src]
         if latest["model"] or latest["battery_model"]:
-            log.info("components: model=%s battery=%s", latest["model"], latest["battery_model"])
-            _save_cfg()  # persist so the model shows immediately after a restart
+            log.info("components: battery=%s drive=%s display=%s",
+                     latest["battery_model"], latest["drive_unit"], latest["display"])
+            _save_cfg()  # persist so the specs show immediately after a restart
     except Exception as err:  # noqa: BLE001
         log.warning("push read failed: %s: %s", type(err).__name__, err)
     return latest["mode"], latest["range"]  # type: ignore[return-value]
@@ -1055,7 +1063,7 @@ INDEX_HTML = """<!doctype html><html><head><meta charset=utf-8>
 *{box-sizing:border-box}
 body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:var(--bg);color:var(--ink);line-height:1.45}
 .wrap{max-width:none;margin:0 auto;padding:22px 22px 48px}
-.tabs{display:flex;gap:8px;margin:2px 0 22px;max-width:380px}
+.tabs{display:flex;gap:8px;margin:2px 0 22px;max-width:520px}
 .tab{flex:1;background:var(--chip);color:var(--mut);border:0;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer}
 .tab.on{background:var(--acc);color:#fff}
 .dash{display:grid;gap:16px;grid-template-columns:1fr}
@@ -1106,6 +1114,7 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
 </style></head><body><div class=wrap>
 <div class=tabs>
   <button class='tab on' id=tabDash data-i18n=tab_dash onclick="tab('dash')">Dashboard</button>
+  <button class=tab id=tabMore data-i18n=tab_more onclick="tab('more')">Meer info</button>
   <button class=tab id=tabSet data-i18n=tab_set onclick="tab('set')">Instellingen</button>
 </div>
 
@@ -1131,14 +1140,23 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
     <div class=card><div class=lbl data-i18n=maint>Onderhoud</div><div class=big id=service>—</div><div class=sub data-i18n=maint_sub>tot de volgende servicebeurt</div></div>
     <div class=card><div class=lbl data-i18n=security>Beveiliging</div><div id=secLine class=big>—</div>
       <div class=armbtns id=armBox></div><div class=warn id=secWarn></div></div>
-    <div class=card><div class=lbl data-i18n=tech>Technische info</div>
-      <div id=techInfo></div></div>
   </div>
 
   <div class='card col-wide'><div class=lbl data-i18n=ranges>Geschat bereik per stand</div>
     <div class=g4 id=ranges></div><div class=cbar id=rangeBar></div></div>
 
   <div class='card col-wide'><div class=lbl data-i18n=mileage>Kilometerstand</div><div class=big id=odo>—</div></div>
+</section>
+
+<section id=more class='set hidden'>
+  <div class=card><div class=lbl data-i18n=tech>Technische info</div>
+    <div id=techInfo></div></div>
+  <div class=card><div class=lbl data-i18n=components>Componenten</div>
+    <div id=compInfo></div></div>
+  <div class=card><div class=lbl data-i18n=about>Over deze add-on</div>
+    <p class=muted data-i18n=about_p></p>
+    <p><a id=repoLink href="https://github.com/bramboe/urban-arrow-ha" target=_blank rel=noopener data-i18n=about_repo>Broncode op GitHub</a></p>
+    <div class=legal data-i18n=legal></div></div>
 </section>
 
 <section id=set class='set hidden'>
@@ -1163,22 +1181,21 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
     <button id=alarmBtn onclick="toggleAlarm()">…</button> <span id=alarmState class=muted></span>
   </div>
 </section>
-<div class=legal data-i18n=legal></div>
 </div>
 <script>
 const $=s=>document.querySelector(s);
 const api=async(p,o)=>(await fetch(p,o)).json();
 const post=(p,b)=>api(p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b||{})});
 const LANG=(navigator.language||'en').toLowerCase().startsWith('nl')?'nl':'en';
-const T={nl:{tab_dash:'Dashboard',tab_set:'Instellingen',mode:'Rijmodus',maint:'Onderhoud',maint_sub:'tot de volgende servicebeurt',security:'Beveiliging',ranges:'Geschat bereik per stand',mileage:'Kilometerstand',tech:'Technische info',tech_kiox:'Kiox (Bosch-hub)',tech_gps:'GPS-module',t_model:'Model',t_frame:'Framenummer',t_part:'Onderdeelnummer',t_hubfw:'Firmware',t_modfw:'Firmware',t_addr:'Bluetooth-adres',t_mac:'MAC-adres',t_mfr:'Fabrikant',t_hw:'Hardware',t_batt:'Module-accu',legal:'Onofficiële, door de community gemaakte integratie. Niet gelieerd aan, goedgekeurd of ondersteund door Bosch eBike Systems of Urban Arrow. Gebruik volledig op eigen risico, zonder enige garantie. Alle merknamen zijn eigendom van hun respectievelijke eigenaren.',su_bike_h:'1. Fiets',su_bike_p:"Zet het display van de fiets aan en scan.",scan_bikes:'Scan fietsen',select_bike:'Selecteer deze fiets',su_pair_p:'Zet de fiets in pairing mode (display → nieuw apparaat koppelen), klik dan:',pair_btn:'Koppel (pair)',su_tracker_h:'2. GPS-tracker (anti-diefstal, optioneel)',su_tracker_p:"De tracker is altijd aan. Scan en kies 'm, of sla over.",scan_trackers:'Scan trackers',skip:'Overslaan / uit',select_tracker:'Selecteer deze tracker',su_alarm_h:'3. Alarm (optioneel — vereist de tracker)',su_alarm_p:'Afwezig = hard (push + lampen), Thuis = stil (alleen melding). Uit = alleen de bewegingssensor.',conn_on:'Verbonden',conn_off:'Niet verbonden',no_reading:'nog geen meting',up_now:'zojuist bijgewerkt',up_min:'bijgewerkt {n} min geleden',up_hour:'bijgewerkt {n} uur geleden',up_day:'bijgewerkt {n} d geleden',motion_y:'beweging',motion_n:'rustig',alarm_off:'Alarm uit',s_disarmed:'Uit',s_home:'Stil',s_away:'Vol alarm',s_trig:'⚠️ GEACTIVEERD',a_off:'Uit',a_home:'Stil',a_away:'Vol alarm',alarm_off_hint:'Alarm staat uit (zie Instellingen)',alarm_enable:'Alarm inschakelen',alarm_disable:'Alarm uitschakelen',now_off:'momenteel uit',now_on:'momenteel aan',scanning:'scannen… (±8s)',nothing:'niets gevonden — staat het apparaat aan/in bereik?',pairing:'koppelen…',paired_ok:'Gekoppeld ✓',paired_fail:'Mislukt — staat de fiets in pairing mode?',request_photo:'Andere fiets? Vraag je kleur/model aan',sec_warn:'⚠️ Let op: scherp zetten houdt de tracker verbonden — daardoor loopt de module-accu sneller leeg. Bij ≤20% schakelt het alarm automatisch uit.'},
-en:{tab_dash:'Dashboard',tab_set:'Settings',mode:'Ride mode',maint:'Maintenance',maint_sub:'until the next service',security:'Security',ranges:'Estimated range per mode',mileage:'Odometer',tech:'Technical info',tech_kiox:'Kiox (Bosch hub)',tech_gps:'GPS module',t_model:'Model',t_frame:'Frame number',t_part:'Part number',t_hubfw:'Firmware',t_modfw:'Firmware',t_addr:'Bluetooth address',t_mac:'MAC address',t_mfr:'Manufacturer',t_hw:'Hardware',t_batt:'Module battery',legal:'Unofficial, community-made integration. Not affiliated with, endorsed by, or supported by Bosch eBike Systems or Urban Arrow. Use entirely at your own risk, without any warranty. All trademarks are the property of their respective owners.',su_bike_h:'1. Bike',su_bike_p:"Turn on the bike's display and scan.",scan_bikes:'Scan bikes',select_bike:'Select this bike',su_pair_p:'Put the bike in pairing mode (display → connect a new device), then:',pair_btn:'Pair',su_tracker_h:'2. GPS tracker (anti-theft, optional)',su_tracker_p:'The tracker is always on. Scan and pick it, or skip.',scan_trackers:'Scan trackers',skip:'Skip / off',select_tracker:'Select this tracker',su_alarm_h:'3. Alarm (optional — needs the tracker)',su_alarm_p:'Away = loud (push + lights), Home = silent (notification only). Off = motion sensor only.',conn_on:'Connected',conn_off:'Not connected',no_reading:'no reading yet',up_now:'updated just now',up_min:'updated {n} min ago',up_hour:'updated {n} h ago',up_day:'updated {n} d ago',motion_y:'motion',motion_n:'still',alarm_off:'Alarm off',s_disarmed:'Off',s_home:'Silent',s_away:'Full alarm',s_trig:'⚠️ TRIGGERED',a_off:'Off',a_home:'Silent',a_away:'Full alarm',alarm_off_hint:'Alarm is off (see Settings)',alarm_enable:'Enable alarm',alarm_disable:'Disable alarm',now_off:'currently off',now_on:'currently on',scanning:'scanning… (±8s)',nothing:'nothing found — is the device on / in range?',pairing:'pairing…',paired_ok:'Paired ✓',paired_fail:'Failed — is the bike in pairing mode?',request_photo:'Different bike? Request your colour & model',sec_warn:'⚠️ Note: arming keeps the tracker connected — this drains the module battery faster. At ≤20% the alarm switches off automatically.'}};
+const T={nl:{tab_dash:'Dashboard',tab_more:'Meer info',tab_set:'Instellingen',components:'Componenten',about:'Over deze add-on',about_p:'Leest je Bosch Smart System eBike (Kiox) via Bluetooth uit en publiceert batterij, bereik, modus, km-stand, beurt, beweging/alarm en tracker naar Home Assistant.',about_repo:'Broncode op GitHub',c_drive:'Aandrijving',c_batt:'Accu',c_disp:'Display',c_hub:'Hub',mode:'Rijmodus',maint:'Onderhoud',maint_sub:'tot de volgende servicebeurt',security:'Beveiliging',ranges:'Geschat bereik per stand',mileage:'Kilometerstand',tech:'Technische info',tech_kiox:'Kiox (Bosch-hub)',tech_gps:'GPS-module',t_model:'Model',t_frame:'Framenummer',t_part:'Onderdeelnummer',t_hubfw:'Firmware',t_modfw:'Firmware',t_addr:'Bluetooth-adres',t_mac:'MAC-adres',t_mfr:'Fabrikant',t_hw:'Hardware',t_batt:'Module-accu',legal:'Onofficiële, door de community gemaakte integratie. Niet gelieerd aan, goedgekeurd of ondersteund door Bosch eBike Systems of Urban Arrow. Gebruik volledig op eigen risico, zonder enige garantie. Alle merknamen zijn eigendom van hun respectievelijke eigenaren.',su_bike_h:'1. Fiets',su_bike_p:"Zet het display van de fiets aan en scan.",scan_bikes:'Scan fietsen',select_bike:'Selecteer deze fiets',su_pair_p:'Zet de fiets in pairing mode (display → nieuw apparaat koppelen), klik dan:',pair_btn:'Koppel (pair)',su_tracker_h:'2. GPS-tracker (anti-diefstal, optioneel)',su_tracker_p:"De tracker is altijd aan. Scan en kies 'm, of sla over.",scan_trackers:'Scan trackers',skip:'Overslaan / uit',select_tracker:'Selecteer deze tracker',su_alarm_h:'3. Alarm (optioneel — vereist de tracker)',su_alarm_p:'Afwezig = hard (push + lampen), Thuis = stil (alleen melding). Uit = alleen de bewegingssensor.',conn_on:'Verbonden',conn_off:'Niet verbonden',no_reading:'nog geen meting',up_now:'zojuist bijgewerkt',up_min:'bijgewerkt {n} min geleden',up_hour:'bijgewerkt {n} uur geleden',up_day:'bijgewerkt {n} d geleden',motion_y:'beweging',motion_n:'rustig',alarm_off:'Alarm uit',s_disarmed:'Uit',s_home:'Stil',s_away:'Vol alarm',s_trig:'⚠️ GEACTIVEERD',a_off:'Uit',a_home:'Stil',a_away:'Vol alarm',alarm_off_hint:'Alarm staat uit (zie Instellingen)',alarm_enable:'Alarm inschakelen',alarm_disable:'Alarm uitschakelen',now_off:'momenteel uit',now_on:'momenteel aan',scanning:'scannen… (±8s)',nothing:'niets gevonden — staat het apparaat aan/in bereik?',pairing:'koppelen…',paired_ok:'Gekoppeld ✓',paired_fail:'Mislukt — staat de fiets in pairing mode?',request_photo:'Andere fiets? Vraag je kleur/model aan',sec_warn:'⚠️ Let op: scherp zetten houdt de tracker verbonden — daardoor loopt de module-accu sneller leeg. Bij ≤20% schakelt het alarm automatisch uit.'},
+en:{tab_dash:'Dashboard',tab_more:'More info',tab_set:'Settings',components:'Components',about:'About this add-on',about_p:'Reads your Bosch Smart System eBike (Kiox) over Bluetooth and publishes battery, range, mode, odometer, service, motion/alarm and tracker to Home Assistant.',about_repo:'Source code on GitHub',c_drive:'Drive unit',c_batt:'Battery',c_disp:'Display',c_hub:'Hub',mode:'Ride mode',maint:'Maintenance',maint_sub:'until the next service',security:'Security',ranges:'Estimated range per mode',mileage:'Odometer',tech:'Technical info',tech_kiox:'Kiox (Bosch hub)',tech_gps:'GPS module',t_model:'Model',t_frame:'Frame number',t_part:'Part number',t_hubfw:'Firmware',t_modfw:'Firmware',t_addr:'Bluetooth address',t_mac:'MAC address',t_mfr:'Manufacturer',t_hw:'Hardware',t_batt:'Module battery',legal:'Unofficial, community-made integration. Not affiliated with, endorsed by, or supported by Bosch eBike Systems or Urban Arrow. Use entirely at your own risk, without any warranty. All trademarks are the property of their respective owners.',su_bike_h:'1. Bike',su_bike_p:"Turn on the bike's display and scan.",scan_bikes:'Scan bikes',select_bike:'Select this bike',su_pair_p:'Put the bike in pairing mode (display → connect a new device), then:',pair_btn:'Pair',su_tracker_h:'2. GPS tracker (anti-theft, optional)',su_tracker_p:'The tracker is always on. Scan and pick it, or skip.',scan_trackers:'Scan trackers',skip:'Skip / off',select_tracker:'Select this tracker',su_alarm_h:'3. Alarm (optional — needs the tracker)',su_alarm_p:'Away = loud (push + lights), Home = silent (notification only). Off = motion sensor only.',conn_on:'Connected',conn_off:'Not connected',no_reading:'no reading yet',up_now:'updated just now',up_min:'updated {n} min ago',up_hour:'updated {n} h ago',up_day:'updated {n} d ago',motion_y:'motion',motion_n:'still',alarm_off:'Alarm off',s_disarmed:'Off',s_home:'Silent',s_away:'Full alarm',s_trig:'⚠️ TRIGGERED',a_off:'Off',a_home:'Silent',a_away:'Full alarm',alarm_off_hint:'Alarm is off (see Settings)',alarm_enable:'Enable alarm',alarm_disable:'Disable alarm',now_off:'currently off',now_on:'currently on',scanning:'scanning… (±8s)',nothing:'nothing found — is the device on / in range?',pairing:'pairing…',paired_ok:'Paired ✓',paired_fail:'Failed — is the bike in pairing mode?',request_photo:'Different bike? Request your colour & model',sec_warn:'⚠️ Note: arming keeps the tracker connected — this drains the module battery faster. At ≤20% the alarm switches off automatically.'}};
 const t=(k,n)=>((T[LANG]||T.en)[k]||k).replace('{n}',n);
 function applyI18n(){document.querySelectorAll('[data-i18n]').forEach(e=>{e.textContent=t(e.dataset.i18n)});}
 const MC={Turbo:'#e2241a',Auto:'#7b3ff2','Tour+':'#1aa3e0',Tour:'#1aa3e0',Eco:'#5fb336',Off:'#8a8a8a'};
 const bcol=p=>p>40?'#37a24a':p>15?'#f59e0b':'#e53935';
 let pick={bike:null,tracker:null};
-function tab(t){$('#dash').classList.toggle('hidden',t!='dash');$('#set').classList.toggle('hidden',t!='set');
-  $('#tabDash').classList.toggle('on',t=='dash');$('#tabSet').classList.toggle('on',t=='set');}
+function tab(t){['dash','more','set'].forEach(x=>$('#'+x).classList.toggle('hidden',x!=t));
+  $('#tabDash').classList.toggle('on',t=='dash');$('#tabMore').classList.toggle('on',t=='more');$('#tabSet').classList.toggle('on',t=='set');}
 function ago(iso){if(!iso)return '';const ts=Date.parse(iso);if(isNaN(ts))return '';
   const s=Math.max(0,(Date.now()-ts)/1000);
   if(s<90)return t('up_now');if(s<3600)return t('up_min',Math.round(s/60));
@@ -1208,6 +1225,9 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
   const kiox=[['t_model',di.model||L.model_number],['t_frame',L.frame_number],['t_part',L.part_number||di.serial],['t_hubfw',L.hub_firmware||di.firmware],['t_addr',L.address||s.bike]];
   const gps=[['t_mac',s.tracker||L.module_mac],['t_modfw',L.module_firmware],['t_hw',L.module_hardware],['t_mfr',L.module_manufacturer],['t_batt',L.tracker_battery!=null?L.tracker_battery+'%':null]];
   $('#techInfo').innerHTML=`<div class=th>${t('tech_kiox')}</div>`+dl(kiox)+`<div class=th>${t('tech_gps')}</div>`+dl(gps);
+  // components
+  const comp=[['c_drive',L.drive_unit],['c_batt',L.battery_model],['c_disp',L.display],['c_hub',di.model||L.model_number]];
+  $('#compInfo').innerHTML=dl(comp);
   // security
   const A=L.alarm; const nm={disarmed:t('s_disarmed'),armed_home:t('s_home'),armed_away:t('s_away'),triggered:t('s_trig')}[A]||'—';
   const mv=L.motion?t('motion_y'):t('motion_n');const tb=L.tracker_battery;
