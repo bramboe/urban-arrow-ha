@@ -832,21 +832,29 @@ async def find_comodule(timeout: float = 12.0):
     (robust against the rotating BLE address); else take the first one. Records
     all trackers for the setup UI. Returns the BLEDevice or None."""
     found: dict[str, object] = {}
+    seen: dict[str, int] = {}
     ev = asyncio.Event()
 
     def cb(device, adv) -> None:
         if _record(device, adv) != "tracker":
             return
+        seen[device.address] = getattr(adv, "rssi", 0)
         if _tracker_mac and (_tracker_module_mac(adv) or "").upper() != _tracker_mac.upper():
             return  # not our tracker
         found["device"] = device
         ev.set()
 
+    log.info("comodule scan: looking for tracker (filter=%s)", _tracker_mac or "any")
     async with _scan_lock, BleakScanner(detection_callback=cb):
         try:
             await asyncio.wait_for(ev.wait(), timeout)
         except asyncio.TimeoutError:
             pass
+    if seen:
+        log.info("comodule scan: trackers seen: %s",
+                 ", ".join(f"{a}@{r}dBm" for a, r in seen.items()))
+    else:
+        log.info("comodule scan: no URBANARROW tracker heard by the local adapter")
     return found.get("device")
 
 
