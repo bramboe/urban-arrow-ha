@@ -887,7 +887,7 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
         for cmd in (_COMP_INIT + ["30054180980960", "30054180985760"]):
             try:
                 await client.write_gatt_char(PUSH_WRITE, bytes.fromhex(cmd), response=False)
-                await asyncio.sleep(0.05)   # pace the writes like the app does
+                await asyncio.sleep(0.08)   # pace the writes like the app does
             except Exception as err:  # noqa: BLE001
                 log.debug("sub write failed: %s", err)
         await asyncio.sleep(10)   # give the component-config dump time to arrive
