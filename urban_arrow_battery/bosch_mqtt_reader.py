@@ -86,14 +86,11 @@ TRACKER_TOPIC = f"{NODE}/tracker"
 ALARM_STATE_TOPIC = f"{NODE}/alarm/state"
 ALARM_CMD_TOPIC = f"{NODE}/alarm/cmd"
 TRACKER_REFRESH_TOPIC = f"{NODE}/tracker/refresh"
-LOCK_TEST_TOPIC = f"{NODE}/lock/test"   # TEST: replay captured lock ON/OFF session
 ARMED_STATES = ("armed_away", "armed_home", "armed_night")
 
 _mqtt: "mqtt.Client | None" = None
 # Alarm state machine (HomeKit Security System via MQTT alarm_control_panel).
 _alarm: dict[str, object] = {"state": "disarmed", "restored": False, "fired": False}
-# TEST: pending eBike-lock replay ("ON"/"OFF"), applied on the next bike connection.
-_lock_test: "str | None" = None
 # Auto-detect: lock onto the first bike we successfully read, and back off bikes
 # we fail to pair with (neighbours' "smart system eBike"s), to avoid churn.
 _locked_addr: "str | None" = None
@@ -489,7 +486,6 @@ def _on_connect(client, _userdata, _flags, reason, _properties=None):
     client.subscribe(ALARM_CMD_TOPIC)
     client.subscribe(ALARM_STATE_TOPIC)
     client.subscribe(TRACKER_REFRESH_TOPIC)
-    client.subscribe(LOCK_TEST_TOPIC)
     # Restore the last measurement (retained) so the UI shows it after a restart.
     client.subscribe(STATE_TOPIC)
     client.subscribe(MODE_TOPIC)
@@ -515,11 +511,6 @@ def _on_message(_client, _userdata, msg) -> None:
     elif msg.topic == TRACKER_REFRESH_TOPIC:
         log.info("manual tracker-battery refresh requested")
         trigger_tracker_refresh()
-    elif msg.topic == LOCK_TEST_TOPIC:
-        global _lock_test
-        if payload.upper() in ("ON", "KIOX", "OFF"):
-            _lock_test = payload.upper()
-            log.info("LOCK TEST queued: %s", _lock_test)
     elif msg.topic == ALARM_STATE_TOPIC and not _alarm["restored"]:
         # First retained message after (re)connect = restore the previous state.
         _alarm["restored"] = True
@@ -702,23 +693,9 @@ def _publish_discovery(client: mqtt.Client) -> None:
         retain=True,
     )
 
-    # TEST buttons: replay the captured eBike-lock ON/OFF session (developer probe).
-    for obj, label, payload in (("lock_test_on", "TEST lock phone", "ON"),
-                                ("lock_test_kiox", "TEST lock phone+Kiox", "KIOX"),
-                                ("lock_test_off", "TEST lock OFF", "OFF")):
-        client.publish(
-            f"{DISC_PREFIX}/button/{NODE}/{obj}/config",
-            json.dumps({
-                "name": label,
-                "unique_id": f"{NODE}_{obj}",
-                "command_topic": LOCK_TEST_TOPIC,
-                "payload_press": payload,
-                "icon": "mdi:bike-fast",
-                "entity_category": "diagnostic",
-                "device": DEVICE,
-            }),
-            retain=True,
-        )
+    # Clean up the removed eBike-lock TEST buttons (clear their retained discovery).
+    for obj in ("lock_test_on", "lock_test_kiox", "lock_test_off"):
+        client.publish(f"{DISC_PREFIX}/button/{NODE}/{obj}/config", "", retain=True)
 
     # Awake/reachable indicator — on = bike advertising (on/in range), off = not.
     client.publish(
@@ -1053,34 +1030,6 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
     return True
 
 
-async def replay_lock(device, kind: str) -> None:
-    """TEST: replay a captured eBike-lock settings session verbatim to the bike.
-    kind: ON = lock via phone only, KIOX = lock via phone + Kiox, OFF = lock off.
-    Confirmed to actually change the lock config. Recoverable via the app/Kiox."""
-    fname = {"ON": "lock_on.txt", "KIOX": "lock_kiox.txt", "OFF": "lock_off.txt"}.get(kind)
-    seq = _load_lines(fname) if fname else []
-    if not seq:
-        log.warning("LOCK TEST: replay file missing for %s", kind)
-        return
-    log.info("LOCK TEST: replaying %s session (%d writes) ...", kind, len(seq))
-    try:
-        async with BleakClient(device, timeout=20.0) as client:
-            try:
-                await client.start_notify(PUSH_NOTIFY, lambda *_: None)
-            except Exception:  # noqa: BLE001
-                pass
-            for cmd in seq:
-                try:
-                    await client.write_gatt_char(PUSH_WRITE, bytes.fromhex(cmd), response=False)
-                    await asyncio.sleep(0.06)
-                except Exception as err:  # noqa: BLE001
-                    log.debug("lock replay write failed: %s", err)
-            await asyncio.sleep(3)
-        log.info("LOCK TEST: %s replay sent — check the bike display/app for lock state", kind)
-    except Exception as err:  # noqa: BLE001
-        log.warning("LOCK TEST failed: %s: %s", type(err).__name__, err)
-
-
 def _tracker_module_mac(adv) -> "str | None":
     """The COMODULE's fixed module MAC from its advertisement (company 0x020F)."""
     raw = (adv.manufacturer_data or {}).get(0x020F)
@@ -1140,18 +1089,13 @@ async def find_bike(timeout: float = 15.0):
 
 async def ble_loop(mqtt_client: mqtt.Client) -> None:
     """Scan (fresh each cycle); on detection, bond if needed and read once."""
-    global _locked_addr, _lock_test
+    global _locked_addr
     last_ok = 0.0
     log.info("scanning (%s)", _bike_addr or "auto-detect 'smart system eBike'")
     while True:
         try:
             device = await find_bike(timeout=15.0)
             auto = _bike_addr is None
-            if device is not None and _lock_test is not None:
-                # TEST: a lock replay is queued — run it now (bike is awake/in range).
-                if await ensure_bonded(device.address):
-                    await replay_lock(device, _lock_test)
-                _lock_test = None
             if device is None:
                 publish_status("Bike not found (off or out of range)", "OFF")
             elif time.time() - last_ok < COOLDOWN:
