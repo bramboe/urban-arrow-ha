@@ -870,12 +870,23 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
             "1002010310030400f410020301100203021002030310020304100203051002030610020307",
             "30054180980960",
             "30054180985760",
+            # Session-init "request" block replayed verbatim from the app (data_read.pklg)
+            # right before it pushes the static component config (brand/SKU/per-comp fw).
+            # These are init requests the app sends on every connect (not settings).
+            "30054080a10b00",
+            "3009409fa1501108011001300540a9a0303130054095a1001130054095a002703002c09530054094a002703009409fa10011080110013004c094080030054081a0027230054085a002723002c085300540a8a002723002c0a8",
+            "30054080a10500",
+            "300540a9a03032",
+            "30054080980100",
+            "30054080980200",
+            "30054081a01011",
+            "30054080983400",
         ):
             try:
                 await client.write_gatt_char(PUSH_WRITE, bytes.fromhex(cmd), response=False)
             except Exception as err:  # noqa: BLE001
                 log.debug("sub write failed: %s", err)
-        await asyncio.sleep(6)   # collect the mode/range push
+        await asyncio.sleep(10)   # give the component-config dump time to arrive
         await client.stop_notify(PUSH_NOTIFY)
         log.debug("push channel: %d frame(s), mode=%s range=%s",
                   count["n"], latest["mode"], latest["range"])
