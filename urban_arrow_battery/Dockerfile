@@ -10,6 +10,7 @@ COPY bosch_mqtt_reader.py /bosch_mqtt_reader.py
 COPY skus.json /skus.json
 COPY comp_init.txt /comp_init.txt
 COPY lock_on.txt /lock_on.txt
+COPY lock_kiox.txt /lock_kiox.txt
 COPY lock_off.txt /lock_off.txt
 COPY bike.png /bike.png
 RUN chmod a+x /run.sh
