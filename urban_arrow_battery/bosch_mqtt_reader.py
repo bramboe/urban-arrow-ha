@@ -872,7 +872,7 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
                 await client.write_gatt_char(PUSH_WRITE, bytes.fromhex(cmd), response=False)
             except Exception as err:  # noqa: BLE001
                 log.debug("sub write failed: %s", err)
-        await asyncio.sleep(6)
+        await asyncio.sleep(10)   # give the component-config dump time to arrive
         await client.stop_notify(PUSH_NOTIFY)
         log.debug("push channel: %d frame(s), mode=%s range=%s",
                   count["n"], latest["mode"], latest["range"])
@@ -910,6 +910,10 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
                      brand, latest["battery_model"], latest["drive_unit"],
                      latest["display"], comps)
             _save_cfg()  # persist so the specs show immediately after a restart
+        else:  # diagnostic: did the component-config push arrive at all?
+            strs = _pb_strings(bytes(buf))
+            log.info("components: none captured (%d push frames, %d strings: %s)",
+                     count["n"], len(strs), strs[:10])
     except Exception as err:  # noqa: BLE001
         log.warning("push read failed: %s: %s", type(err).__name__, err)
     return latest["mode"], latest["range"]  # type: ignore[return-value]
