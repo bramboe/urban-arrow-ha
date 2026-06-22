@@ -177,13 +177,16 @@ _SKUS = _load_skus()
 def _resolve_product() -> None:
     """Look up the friendly product name + colour from the bike's article code
     (preferred) or product code, and store them in _last."""
-    entry = (_SKUS.get("skus", {}).get(_last.get("sku", ""))
+    entry = (_SKUS.get("frames", {}).get(_last.get("frame_number", ""))
+             or _SKUS.get("skus", {}).get(_last.get("sku", ""))
              or _SKUS.get("product_codes", {}).get(_last.get("product_code", "")))
     if isinstance(entry, dict):
         if entry.get("name"):
             _last["product_name"] = entry["name"]
         if entry.get("color"):
             _last["product_color"] = entry["color"]
+        if entry.get("sku") and not _last.get("sku"):
+            _last["sku"] = entry["sku"]   # show the model SKU even if not read live
 
 
 _cfg0 = _load_cfg()
@@ -872,25 +875,7 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
                 await client.write_gatt_char(PUSH_WRITE, bytes.fromhex(cmd), response=False)
             except Exception as err:  # noqa: BLE001
                 log.debug("sub write failed: %s", err)
-        # Subscribe to the component/config "live value" attributes (the aXXX set
-        # the app subscribes to at session start), which makes the bike push the
-        # static config records (brand 186c, SKU 1875, product 182a, per-component
-        # name/fw/date). Read-only subscribes: 30 05 41 80 <attr-hi> <attr-lo> <tag>.
-        comp_attrs = (
-            0xA011, 0xA041, 0xA051, 0xA081, 0xA083, 0xA085, 0xA087, 0xA088,
-            0xA089, 0xA08A, 0xA08C, 0xA08D, 0xA0AA, 0xA0E4, 0xA0F3, 0xA105,
-            0xA107, 0xA10C, 0xA10E, 0xA10F, 0xA124, 0xA162, 0xA163, 0xA165,
-            0xA16A, 0xA16B, 0xA173, 0xA176, 0xA177, 0xA17C, 0xA181, 0xA182,
-            0xA183, 0xA185, 0xA186, 0xA19B, 0xA210, 0xA241, 0xA24C, 0xA24D,
-            0xA250, 0xA316,
-        )
-        for i, attr in enumerate(comp_attrs):
-            sub = bytes([0x30, 0x05, 0x41, 0x80, attr >> 8, attr & 0xFF, 0x60 + i])
-            try:
-                await client.write_gatt_char(PUSH_WRITE, sub, response=False)
-            except Exception as err:  # noqa: BLE001
-                log.debug("comp sub failed: %s", err)
-        await asyncio.sleep(10)   # give the component-config dump time to arrive
+        await asyncio.sleep(6)   # collect the mode/range push
         await client.stop_notify(PUSH_NOTIFY)
         log.debug("push channel: %d frame(s), mode=%s range=%s",
                   count["n"], latest["mode"], latest["range"])
@@ -982,6 +967,7 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
                 if fr:
                     _last["frame_number"] = fr
                     log.info("frame number: %s", fr)
+                    _resolve_product()  # frame -> product name/colour/SKU lookup
             except Exception as err:  # noqa: BLE001
                 log.debug("eb41 read failed: %s", err)
     if raw is None:

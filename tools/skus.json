@@ -1,5 +1,8 @@
 {
-  "_comment": "Bosch eBike base SKU / product code -> friendly product name + colour. The bike broadcasts its article code (e.g. BUA0652) and product code over BLE, but NOT the marketing name or colour, so they are looked up here. Add your bike via a GitHub issue/PR: key by the article code shown in the panel (Technical info).",
+  "_comment": "Friendly product name + colour lookup. The marketing model/colour are NOT broadcast over BLE, so they are resolved here. Preferred key: the bike's article code (SKU, e.g. BUA0652) — but the bike only pushes that during the app's full settings-sync, which the add-on does not replicate. Reliable fallback: the FRAME number (read from eb41 every time) — add your bike under 'frames' with name/color/sku. Find both in the panel (Technical info). Contribute via a GitHub issue/PR.",
+  "frames": {
+    "2508179RFGP": { "name": "Urban Arrow Family Advanced Next", "color": "Black", "sku": "BUA0652" }
+  },
   "skus": {
     "BUA0652": { "name": "Urban Arrow Family Advanced Next", "color": "Black" }
   },
