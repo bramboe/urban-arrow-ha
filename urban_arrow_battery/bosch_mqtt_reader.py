@@ -168,7 +168,16 @@ _tracker_always: bool = os.getenv("TRACKER_ALWAYS", "0") == "1"
 # frame whenever its content changes (excluding the high-rate motion/sensor
 # frames), to find which byte flips when the bike's MAIN battery is pulled/inserted
 # while the module stays powered. Keeps the tracker connected without arming.
-_probe_frames: bool = os.getenv("PROBE_FRAMES", "0") == "1"
+def _opt(key: str, default=False):
+    """Read an add-on option straight from /data/options.json. Robust against the
+    run.sh/bashio env path (which silently dropped probe_frames at runtime)."""
+    try:
+        with open("/data/options.json") as fh:
+            return json.load(fh).get(key, default)
+    except Exception:  # noqa: BLE001
+        return default
+
+_probe_frames: bool = os.getenv("PROBE_FRAMES", "0") == "1" or bool(_opt("probe_frames"))
 _PROBE_SKIP = (0xD1, 0xC8)   # frame types that flood continuously — never probed
 _probe_last: dict[int, bytes] = {}
 
@@ -1607,6 +1616,8 @@ async def main() -> None:
     _mqtt = make_mqtt()
     log.info("reader v2.0 started (%s, cooldown %ss)",
              _bike_addr or "auto-detect", COOLDOWN)
+    if _probe_frames:
+        log.info("PROBE frame logging ENABLED (155e status frames)")
     publish_status("Starting…", "OFF")
     try:
         await start_web()
