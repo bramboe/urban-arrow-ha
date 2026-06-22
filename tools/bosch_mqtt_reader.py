@@ -124,6 +124,42 @@ def _save_cfg() -> None:
         log.warning("save config: %s", err)
 
 
+# Persist the last shown readings to disk so the panel shows them INSTANTLY on the
+# next start, instead of flashing dashes until the retained MQTT values arrive (or
+# staying empty forever if the broker lost its retained messages). Only stable,
+# display-relevant fields — NOT live flags (tracker_connected/motion/bonded), which
+# must reset to off on restart rather than wrongly read "connected".
+LAST_FILE = "/data/last.json"
+_PERSIST_KEYS = (
+    "battery", "last_updated", "address", "odometer", "next_service",
+    "frame_number", "hub_firmware", "part_number", "model_number",
+    "module_firmware", "lock_label", "mode", "range", "bike_model", "bike_brand",
+    "sku", "product_code", "product_name", "product_color", "battery_model",
+    "drive_unit", "display", "components", "tracker_battery", "tracker_updated",
+    "module_mac", "tracker_addr", "module_manufacturer", "module_hardware",
+)
+
+
+def _save_last() -> None:
+    try:
+        snapshot = {k: _last[k] for k in _PERSIST_KEYS if _last.get(k) is not None}
+        with open(LAST_FILE, "w") as fh:
+            json.dump(snapshot, fh)
+    except Exception as err:  # noqa: BLE001
+        log.debug("save last: %s", err)
+
+
+def _load_last() -> None:
+    """Seed _last from the on-disk snapshot at startup (without clobbering values
+    already set from config)."""
+    try:
+        with open(LAST_FILE) as fh:
+            for k, v in json.load(fh).items():
+                _last.setdefault(k, v)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _load_skus() -> dict:
     """Bundled article-code/product-code -> {name, color} lookup (skus.json)."""
     for path in ("/skus.json", os.path.join(os.path.dirname(__file__), "skus.json")):
@@ -964,6 +1000,7 @@ async def read_snapshot(mqtt_client: mqtt.Client, device) -> bool:
         log.info("range km: %s", ranges)
         _last["range"] = ranges
     publish_status(f"Battery {battery}% read at {time.strftime('%Y-%m-%d %H:%M')}", "ON")
+    _save_last()   # persist immediately so a fresh reading survives a restart
     return True
 
 
@@ -1601,9 +1638,17 @@ async def start_web() -> None:
     log.info("setup UI listening on :%s", INGRESS_PORT)
 
 
+async def _persist_last_loop() -> None:
+    """Periodically snapshot _last to disk so a restart shows data instantly."""
+    while True:
+        await asyncio.sleep(20)
+        _save_last()
+
+
 async def main() -> None:
     global _mqtt, _loop
     _loop = asyncio.get_running_loop()
+    _load_last()        # seed the panel from disk before the UI serves /api/status
     _mqtt = make_mqtt()
     log.info("reader v2.0 started (%s, cooldown %ss)",
              _bike_addr or "auto-detect", COOLDOWN)
@@ -1620,6 +1665,7 @@ async def main() -> None:
     # One-time tracker battery read at startup so the module % is always shown
     # (it then refreshes when the bike is on or the alarm is armed, idle otherwise).
     asyncio.create_task(read_tracker_battery())
+    asyncio.create_task(_persist_last_loop())   # keep the on-disk snapshot fresh
     await ble_loop(_mqtt)
 
 
