@@ -174,6 +174,21 @@ def _load_skus() -> dict:
 _SKUS = _load_skus()
 
 
+def _load_comp_init() -> list:
+    """Bundled session-init request sequence (hex per line, from the app capture)
+    that makes the bike push its static component config over the push channel."""
+    for path in ("/comp_init.txt", os.path.join(os.path.dirname(__file__), "comp_init.txt")):
+        try:
+            with open(path) as fh:
+                return [ln.strip() for ln in fh if ln.strip()]
+        except Exception:  # noqa: BLE001
+            continue
+    return []
+
+
+_COMP_INIT = _load_comp_init()
+
+
 def _resolve_product() -> None:
     """Look up the friendly product name + colour from the bike's article code
     (preferred) or product code, and store them in _last."""
@@ -866,24 +881,13 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
         # header, then the ride-mode (9809) and per-mode range (9857) attribute
         # subscriptions. The bike then pushes 30 04 98 09 08 <level> and
         # 98 57 0a 04 <eco><tour><auto><turbo>.
-        for cmd in (
-            "1002010310030400f410020301100203021002030310020304100203051002030610020307",
-            "30054180980960",
-            "30054180985760",
-            # Session-init "request" block replayed verbatim from the app (data_read.pklg)
-            # right before it pushes the static component config (brand/SKU/per-comp fw).
-            # These are init requests the app sends on every connect (not settings).
-            "30054080a10b00",
-            "3009409fa1501108011001300540a9a0303130054095a1001130054095a002703002c09530054094a002703009409fa10011080110013004c094080030054081a0027230054085a002723002c085300540a8a002723002c0a8",
-            "30054080a10500",
-            "300540a9a03032",
-            "30054080980100",
-            "30054080980200",
-            "30054081a01011",
-            "30054080983400",
-        ):
+        # Base subscriptions for ride mode (9809) + range (9857), then replay the
+        # app's full session-init request sequence (comp_init.txt) which makes the
+        # bike push its static component config (brand/SKU/product/per-component fw).
+        for cmd in (_COMP_INIT + ["30054180980960", "30054180985760"]):
             try:
                 await client.write_gatt_char(PUSH_WRITE, bytes.fromhex(cmd), response=False)
+                await asyncio.sleep(0.05)   # pace the writes like the app does
             except Exception as err:  # noqa: BLE001
                 log.debug("sub write failed: %s", err)
         await asyncio.sleep(10)   # give the component-config dump time to arrive

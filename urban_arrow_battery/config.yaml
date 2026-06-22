@@ -1,5 +1,5 @@
 name: Bosch Kiox eBike
-version: "2.22.1"
+version: "2.23.0"
 slug: urban_arrow_battery
 description: >-
   Reads a Bosch Smart System eBike (Kiox display) over Bluetooth — battery, range
