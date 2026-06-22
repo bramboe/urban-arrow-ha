@@ -1397,7 +1397,6 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
     <div class=card><div class=lbl data-i18n=gps>GPS-module</div>
       <div class=between><div class=big id=gpsBatt>—</div><span class=pill id=gpsConn></span></div>
       <div class=sub id=gpsUpd></div>
-      <div id=gpsInfo style="margin-top:14px"></div>
       <div style="margin-top:14px"><button class=sec id=trkBtn data-i18n=refresh_module onclick="refreshTracker()">Module-accu verversen</button></div></div>
   </div>
 
@@ -1495,7 +1494,6 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
   $('#gpsBatt').innerHTML=(tbv!=null?tbv:'—')+'<small>%</small>';
   $('#gpsUpd').textContent=L.tracker_updated?ago(L.tracker_updated):t('no_reading');
   const gc=$('#gpsConn'); if(L.tracker_connected){gc.style.display='';gc.style.background='rgba(67,160,71,.18)';gc.style.color='#43a047';gc.textContent=t('gps_conn');}else gc.style.display='none';
-  $('#gpsInfo').innerHTML=dl([['t_mac',s.tracker||L.module_mac],['t_modfw',L.module_firmware],['t_hw',L.module_hardware],['t_mfr',L.module_manufacturer]]);
   // security
   const A=L.alarm; const nm={disarmed:t('s_disarmed'),armed_home:t('s_home'),armed_away:t('s_away'),triggered:t('s_trig')}[A]||'—';
   const mv=L.motion?t('motion_y'):t('motion_n');const tb=L.tracker_battery;
