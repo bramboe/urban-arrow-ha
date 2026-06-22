@@ -872,6 +872,20 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
                 await client.write_gatt_char(PUSH_WRITE, bytes.fromhex(cmd), response=False)
             except Exception as err:  # noqa: BLE001
                 log.debug("sub write failed: %s", err)
+        # Subscribe to the static component attributes so the bike pushes them too
+        # (brand 186c, SKU 1875, product 182a, and per-subsystem name/fw/date).
+        # Form: 30 05 41 80 <attr-hi> <attr-lo> <tag>; tag increments per request.
+        comp_attrs = (0x186C, 0x1875, 0x182A,
+                      0x2065, 0x206B, 0x2066,   # controller: name, fw, date
+                      0x1803, 0x1806, 0x1837,   # drive unit: name, fw, date
+                      0x009B, 0x0086, 0x00A4,   # battery: name, fw, date
+                      0x0D09, 0x0D06, 0x0D08)   # display: name, fw, date
+        for i, attr in enumerate(comp_attrs):
+            sub = bytes([0x30, 0x05, 0x41, 0x80, attr >> 8, attr & 0xFF, 0x60 + i])
+            try:
+                await client.write_gatt_char(PUSH_WRITE, sub, response=False)
+            except Exception as err:  # noqa: BLE001
+                log.debug("comp sub failed: %s", err)
         await asyncio.sleep(10)   # give the component-config dump time to arrive
         await client.stop_notify(PUSH_NOTIFY)
         log.debug("push channel: %d frame(s), mode=%s range=%s",
