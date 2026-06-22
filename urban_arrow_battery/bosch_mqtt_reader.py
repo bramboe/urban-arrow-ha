@@ -872,14 +872,18 @@ async def read_push(client: BleakClient) -> tuple[str | None, dict[str, int] | N
                 await client.write_gatt_char(PUSH_WRITE, bytes.fromhex(cmd), response=False)
             except Exception as err:  # noqa: BLE001
                 log.debug("sub write failed: %s", err)
-        # Subscribe to the static component attributes so the bike pushes them too
-        # (brand 186c, SKU 1875, product 182a, and per-subsystem name/fw/date).
-        # Form: 30 05 41 80 <attr-hi> <attr-lo> <tag>; tag increments per request.
-        comp_attrs = (0x186C, 0x1875, 0x182A,
-                      0x2065, 0x206B, 0x2066,   # controller: name, fw, date
-                      0x1803, 0x1806, 0x1837,   # drive unit: name, fw, date
-                      0x009B, 0x0086, 0x00A4,   # battery: name, fw, date
-                      0x0D09, 0x0D06, 0x0D08)   # display: name, fw, date
+        # Subscribe to the component/config "live value" attributes (the aXXX set
+        # the app subscribes to at session start), which makes the bike push the
+        # static config records (brand 186c, SKU 1875, product 182a, per-component
+        # name/fw/date). Read-only subscribes: 30 05 41 80 <attr-hi> <attr-lo> <tag>.
+        comp_attrs = (
+            0xA011, 0xA041, 0xA051, 0xA081, 0xA083, 0xA085, 0xA087, 0xA088,
+            0xA089, 0xA08A, 0xA08C, 0xA08D, 0xA0AA, 0xA0E4, 0xA0F3, 0xA105,
+            0xA107, 0xA10C, 0xA10E, 0xA10F, 0xA124, 0xA162, 0xA163, 0xA165,
+            0xA16A, 0xA16B, 0xA173, 0xA176, 0xA177, 0xA17C, 0xA181, 0xA182,
+            0xA183, 0xA185, 0xA186, 0xA19B, 0xA210, 0xA241, 0xA24C, 0xA24D,
+            0xA250, 0xA316,
+        )
         for i, attr in enumerate(comp_attrs):
             sub = bytes([0x30, 0x05, 0x41, 0x80, attr >> 8, attr & 0xFF, 0x60 + i])
             try:
