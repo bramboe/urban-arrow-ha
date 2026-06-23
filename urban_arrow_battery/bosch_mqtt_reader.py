@@ -1566,7 +1566,12 @@ async function scan(kind){const box=kind=='bike'?'#bikes':'#trackers';
   const list=await api('api/scan',{method:'POST'});const items=list.filter(d=>d.kind==kind);
   if(!items.length){$(box).innerHTML=`<span class=muted>${t('nothing')}</span>`;return}
   $(box).innerHTML='';items.forEach(d=>{const el=document.createElement('div');el.className='row';
-   el.innerHTML=`<div><b>${d.name||kind}</b><div class=muted style="font-size:12px">${fmt(d)}</div></div>`;
+   if(kind=='bike'){
+     el.innerHTML=`<img src=bike.png style="width:56px;height:auto;flex:0 0 auto">`+
+       `<div><b>Bosch Smart System eBike</b><div class=muted style="font-size:12px">${d.address} · ${d.rssi} dBm</div></div>`;
+   }else{
+     el.innerHTML=`<div><b>${d.name||kind}</b><div class=muted style="font-size:12px">${fmt(d)}</div></div>`;
+   }
    el.onclick=()=>{pick[kind]=d;[...$(box).children].forEach(c=>c.classList.remove('sel'));el.classList.add('sel');
     $(kind=='bike'?'#bikeActions':'#trackerActions').classList.remove('hidden')};
    $(box).appendChild(el);});}
