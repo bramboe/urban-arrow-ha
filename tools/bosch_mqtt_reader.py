@@ -1463,6 +1463,11 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
     <div id=pairBox class=hidden style='margin-top:8px'>
       <p class=muted data-i18n=su_pair_p>Zet de fiets in pairing mode (display → nieuw apparaat koppelen), klik dan:</p>
       <button id=pairBtn data-i18n=pair_btn onclick="pair()">Koppel (pair)</button><span id=pairMsg></span></div>
+    <div id=pairedCard class=hidden style='margin-top:12px;text-align:center;border-top:1px solid var(--line);padding-top:14px'>
+      <div class=ok data-i18n=paired_ok>Gekoppeld ✓</div>
+      <img src=bike.png style='width:120px;height:auto;margin:8px auto'>
+      <div class=htitle style='font-size:16px' id=pairedModel>—</div>
+      <div class=sub id=pairedMac></div></div>
     <div id=removeBox class=hidden style='margin-top:14px;border-top:1px solid var(--line);padding-top:14px'>
       <button class=sec id=removeBtn data-i18n=remove_bike onclick="removeBike()">Verwijder fiets</button>
       <span id=removeMsg class=muted></span></div>
@@ -1509,6 +1514,9 @@ function ago(iso){if(!iso)return '';const ts=Date.parse(iso);if(isNaN(ts))return
 const fresh=iso=>{const ts=Date.parse(iso);return !isNaN(ts)&&(Date.now()-ts)<150000;};
 async function refresh(){const s=await api('api/status');const L=s.last||{};const di=L.device_info||{};const dev=s.device||{};const R=L.range||{};
   window._added=!s.bike_off&&!!(L.last_updated||L.frame_number||s.bike||s.locked);rt();
+  if(!$('#pairedCard').classList.contains('hidden')){
+    $('#pairedModel').textContent=L.bike_model||L.product_name||L.bike_brand||'Bosch Smart System eBike';
+    if(L.address||s.bike)$('#pairedMac').textContent=L.address||s.bike;}
   $('#devBar').style.display=s.probe?'':'none';
   $('#bikeTitle').textContent=L.bike_model||L.product_name||L.bike_brand||di.manufacturer||dev.manufacturer||'Bosch eBike';
   $('#bikeSpec').textContent=L.last_updated?ago(L.last_updated):t('no_reading');
@@ -1583,7 +1591,11 @@ async function removeBike(){const b=$('#removeBtn'),m=$('#removeMsg');
   await post('api/remove_bike');m.textContent=' '+t('removed_ok');refresh()}
 async function pair(){$('#pairBtn').disabled=true;$('#pairMsg').textContent=' '+t('pairing');
   const r=await post('api/pair');$('#pairBtn').disabled=false;
-  $('#pairMsg').innerHTML=r.ok?` <span class=ok>${t('paired_ok')}</span>`:` <span class=bad>${t('paired_fail')}</span>`;refresh()}
+  if(r.ok){$('#pairMsg').innerHTML='';$('#pairedCard').classList.remove('hidden');
+    $('#pairedMac').textContent=(pick.bike?pick.bike.address:'');
+    $('#pairedModel').textContent='Bosch Smart System eBike';}
+  else $('#pairMsg').innerHTML=` <span class=bad>${t('paired_fail')}</span>`;
+  refresh()}
 async function selectTracker(){await post('api/select_tracker',{module_mac:pick.tracker.module_mac});refresh()}
 async function skipTracker(){await post('api/select_tracker',{off:true});refresh()}
 async function refreshTracker(){const b=$('#trkBtn');b.disabled=true;b.textContent=t('refreshing');
