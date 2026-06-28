@@ -28,6 +28,15 @@ configuration:
       Uit (standaard) spaart de eigen accu van de tracker door alleen te
       verbinden wanneer het alarm scherp staat. Aan = live beweging, ook
       wanneer disarmed.
+  presence_alarm:
+    name: Aanwezigheids-alarm (buiten bereik)
+    description: >-
+      Passieve anti-diefstal, standaard aan. Als het alarm scherp staat, gaat het
+      af zodra de Bluetooth-advertentie van de tracker verdwijnt (de fiets wordt uit
+      bereik gehaald). Verbindingsloos, dus het kost de module geen extra accu en de
+      sensor "in bereik" werkt ook als het alarm uit staat. Het detecteert dat de
+      fiets de buurt VERLAAT, niet schudden ter plekke (dat vereist de
+      bewegingssensor terwijl het alarm scherp staat).
   probe_frames:
     name: COMODULE-probe (ontwikkelaar)
     description: >-

@@ -26,6 +26,14 @@ configuration:
     description: >-
       Off (default) saves the tracker's own battery by connecting only while the
       alarm is armed. Turn on for live motion even when disarmed.
+  presence_alarm:
+    name: Presence alarm (out of range)
+    description: >-
+      Passive anti-theft, on by default. While armed, trips the alarm if the
+      tracker's Bluetooth advertisement disappears (the bike is taken out of
+      range). Connection-free, so it costs the module no extra battery and the
+      "In range" sensor works even while disarmed. It detects the bike LEAVING
+      the area, not shaking it in place (that needs the motion sensor while armed).
   probe_frames:
     name: COMODULE probe (developer)
     description: >-
