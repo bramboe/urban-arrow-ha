@@ -1346,6 +1346,13 @@ async def start_motion(_mqtt_client: mqtt.Client) -> None:
 async def adv_probe_loop() -> None:
     """DEV: passively scan and log the COMODULE advertisement whenever it changes,
     to test if movement is visible in the advert (no connection = battery-friendly)."""
+    # Continuous trace: log every tracker advert, throttled to ~2s per address,
+    # so a rest period and a movement period can be compared side by side. We do
+    # NOT dedup on payload (that hid whether the loop was even scanning); instead
+    # we tag each line CHANGED/same vs the previous payload for that address.
+    seen_count: dict[str, int] = {}
+    last_log_ts: dict[str, float] = {}
+
     def cb(device, adv) -> None:
         if _record(device, adv) != "tracker":
             return
@@ -1355,10 +1362,18 @@ async def adv_probe_loop() -> None:
         for uuid, val in (adv.service_data or {}).items():
             parts.append(f"svc{uuid[-4:]}={bytes(val).hex()}")
         payload = " ".join(parts)
-        if _adv_last.get(device.address) != payload:
-            _adv_last[device.address] = payload
-            log.info("ADV PROBE [%s @ %sdBm]: %s", device.address,
-                     getattr(adv, "rssi", "?"), payload)
+        addr = device.address
+        seen_count[addr] = seen_count.get(addr, 0) + 1
+        now = time.monotonic()
+        changed = _adv_last.get(addr) != payload
+        # Always log a change immediately; otherwise throttle repeats to ~2s.
+        if not changed and now - last_log_ts.get(addr, 0.0) < 2.0:
+            return
+        last_log_ts[addr] = now
+        _adv_last[addr] = payload
+        log.info("ADV PROBE [%s @ %sdBm #%d %s]: %s", addr,
+                 getattr(adv, "rssi", "?"), seen_count[addr],
+                 "CHANGED" if changed else "same", payload)
 
     while True:
         if not _adv_probe:
