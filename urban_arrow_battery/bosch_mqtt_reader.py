@@ -1418,6 +1418,12 @@ async def presence_loop() -> None:
                 was_present = False
                 await asyncio.sleep(PRESENCE_GAP)
                 continue
+            if _adv_probe:
+                # The adv-probe diagnostic holds the scan adapter continuously, so
+                # presence scans would starve and falsely flip to "out of range"
+                # (and could trip the alarm). Hold the last state while it runs.
+                await asyncio.sleep(PRESENCE_GAP)
+                continue
             now = time.time()
             # If the motion watcher already holds the connection, it's in range.
             if _last.get("tracker_connected"):
@@ -1451,44 +1457,68 @@ async def start_motion(_mqtt_client: mqtt.Client) -> None:
 
 
 async def adv_probe_loop() -> None:
-    """DEV: passively scan and log the COMODULE advertisement whenever it changes,
-    to test if movement is visible in the advert (no connection = battery-friendly)."""
-    # Continuous trace: log every tracker advert, throttled to ~2s per address,
-    # so a rest period and a movement period can be compared side by side. We do
-    # NOT dedup on payload (that hid whether the loop was even scanning); instead
-    # we tag each line CHANGED/same vs the previous payload for that address.
-    seen_count: dict[str, int] = {}
-    last_log_ts: dict[str, float] = {}
+    """DEV (adv_probe): characterise the tracker's advertising WITHOUT connecting,
+    to test the two remaining passive-motion hypotheses:
+      (1) advert RATE/interval changes on motion — log adverts/sec + gap spread per
+          10s window (rest vs shake comparison),
+      (2) a motion flag hides in the SCAN-RESPONSE or other AD fields we never
+          logged — use ACTIVE scanning and dump the FULL AdvertisementData
+          (local_name, tx_power, service_uuids, manufacturer + service data),
+          logging a line whenever ANY of those fields changes.
+    Holds the BLE adapter while on (normal reads + presence pause)."""
+    RATE_WINDOW = 10.0
+    arr: dict[str, list[float]] = {}      # arrival monotonic ts per address (rate)
+    last_ts: dict[str, float] = {}        # previous arrival, for inter-arrival gap
+    last_sig: dict[str, str] = {}         # full-field signature per address
 
     def cb(device, adv) -> None:
         if _record(device, adv) != "tracker":
             return
-        parts = []
-        for cid, val in (adv.manufacturer_data or {}).items():
-            parts.append(f"mfr{cid:04x}={bytes(val).hex()}")
-        for uuid, val in (adv.service_data or {}).items():
-            parts.append(f"svc{uuid[-4:]}={bytes(val).hex()}")
-        payload = " ".join(parts)
         addr = device.address
-        seen_count[addr] = seen_count.get(addr, 0) + 1
         now = time.monotonic()
-        changed = _adv_last.get(addr) != payload
-        # Always log a change immediately; otherwise throttle repeats to ~2s.
-        if not changed and now - last_log_ts.get(addr, 0.0) < 2.0:
-            return
-        last_log_ts[addr] = now
-        _adv_last[addr] = payload
-        log.info("ADV PROBE [%s @ %sdBm #%d %s]: %s", addr,
-                 getattr(adv, "rssi", "?"), seen_count[addr],
-                 "CHANGED" if changed else "same", payload)
+        gap = now - last_ts.get(addr, now)
+        last_ts[addr] = now
+        arr.setdefault(addr, []).append(now)
+        # (2) Full advertisement signature, incl. scan-response-only fields.
+        sig_parts = [f"name={adv.local_name!r}",
+                     f"tx={getattr(adv, 'tx_power', None)}",
+                     f"uuids={list(adv.service_uuids or [])}"]
+        for cid, val in (adv.manufacturer_data or {}).items():
+            sig_parts.append(f"mfr{cid:04x}={bytes(val).hex()}")
+        for uuid, val in (adv.service_data or {}).items():
+            sig_parts.append(f"svc{uuid[-4:]}={bytes(val).hex()}")
+        sig = " ".join(sig_parts)
+        if last_sig.get(addr) != sig:
+            last_sig[addr] = sig
+            log.info("ADV FIELDS [%s @ %sdBm gap=%.2fs CHANGED]: %s",
+                     addr, getattr(adv, "rssi", "?"), gap, sig)
 
     while True:
         if not _adv_probe:
             await asyncio.sleep(4)
             continue
         try:
-            async with _scan_lock, BleakScanner(detection_callback=cb):
-                await asyncio.sleep(25)        # passive listen window
+            # ACTIVE scanning so the tracker's scan-response is solicited too.
+            async with _scan_lock, BleakScanner(detection_callback=cb,
+                                                scanning_mode="active"):
+                while _adv_probe:
+                    await asyncio.sleep(RATE_WINDOW)
+                    now = time.monotonic()
+                    for addr in list(arr):
+                        recent = [t for t in arr[addr] if now - t <= RATE_WINDOW]
+                        arr[addr] = recent
+                        if not recent:
+                            continue
+                        gaps = [recent[i] - recent[i - 1]
+                                for i in range(1, len(recent))]
+                        mn = min(gaps) if gaps else 0.0
+                        mx = max(gaps) if gaps else 0.0
+                        avg = (sum(gaps) / len(gaps)) if gaps else 0.0
+                        # (1) Rate summary — compare adverts/sec rest vs motion.
+                        log.info("ADV RATE [%s]: %d in %.0fs = %.1f/s  "
+                                 "gap min/avg/max %.2f/%.2f/%.2fs", addr,
+                                 len(recent), RATE_WINDOW, len(recent) / RATE_WINDOW,
+                                 mn, avg, mx)
         except Exception as err:  # noqa: BLE001
             log.debug("adv probe scan failed: %s", err)
             await asyncio.sleep(2)

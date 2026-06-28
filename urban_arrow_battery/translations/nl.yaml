@@ -47,11 +47,13 @@ configuration:
   adv_probe:
     name: Advertentie-probe (ontwikkelaar)
     description: >-
-      Alleen voor ontwikkeling/diagnostiek. Logt passief de COMODULE-advertentie
-      wanneer die verandert, om te testen of beweging zichtbaar is in de advertentie
-      (dan kan bewegingsdetectie zónder verbinding — batterijvriendelijk). Passief —
-      geen extra verbruik van de module. Houdt de BLE-adapter bezet, dus normale
-      uitlezingen pauzeren zolang 'ie aan staat.
+      Alleen voor ontwikkeling/diagnostiek. Verbindingsloze test voor passieve
+      bewegingsdetectie: logt de FREQUENTIE van de advertentie (advertenties/sec +
+      spreiding, per 10s) en de VOLLEDIGE advertentie incl. scan-response (active
+      scan) zodra een veld verandert — om te zien of beweging zichtbaar is in de
+      timing of de scan-response. Geen extra verbruik van de module, maar houdt de
+      BLE-adapter bezet (normale uitlezingen en aanwezigheid pauzeren). Draai 'm
+      disarmed en zet 'm daarna weer uit.
   mqtt_host:
     name: MQTT-host
     description: Optionele MQTT-broker override. Leeg laten om de Mosquitto add-on te gebruiken.

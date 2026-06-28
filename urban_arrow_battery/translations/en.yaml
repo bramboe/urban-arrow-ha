@@ -44,10 +44,12 @@ configuration:
   adv_probe:
     name: Advertisement probe (developer)
     description: >-
-      Developer/diagnostic only. Passively logs the COMODULE advertisement when it
-      changes, to test whether movement is visible in the advert (which would allow
-      battery-friendly motion detection without a connection). Passive — no battery
-      drain on the module. Holds the BLE adapter, so it pauses normal reads while on.
+      Developer/diagnostic only. Connection-free test for passive motion detection:
+      logs the tracker's advertisement RATE (adverts/sec + gap spread, per 10s) and
+      the FULL advertisement incl. the scan-response (active scan) whenever any field
+      changes — to see if movement shows up in the advert timing or scan-response.
+      No battery drain on the module, but it holds the BLE adapter, so normal reads
+      and presence pause while it is on. Run it disarmed and turn it off afterwards.
   mqtt_host:
     name: MQTT host
     description: Optional MQTT broker override. Leave empty to use the Mosquitto add-on.
