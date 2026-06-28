@@ -33,6 +33,13 @@ configuration:
       the tracker connected to reverse-engineer signals (e.g. the main-battery
       flag). Drains the module battery faster — leave OFF for normal use. A banner
       shows in the panel while it is on.
+  adv_probe:
+    name: Advertisement probe (developer)
+    description: >-
+      Developer/diagnostic only. Passively logs the COMODULE advertisement when it
+      changes, to test whether movement is visible in the advert (which would allow
+      battery-friendly motion detection without a connection). Passive — no battery
+      drain on the module. Holds the BLE adapter, so it pauses normal reads while on.
   mqtt_host:
     name: MQTT host
     description: Optional MQTT broker override. Leave empty to use the Mosquitto add-on.

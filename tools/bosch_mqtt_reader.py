@@ -227,6 +227,12 @@ _tracker_always: bool = os.getenv("TRACKER_ALWAYS", "0") == "1"
 _probe_frames: bool = os.getenv("PROBE_FRAMES", "0") == "1"
 _PROBE_SKIP = (0xD1, 0xC8)   # frame types that flood continuously — never probed
 _probe_last: dict[int, bytes] = {}
+# DEVELOPER ADV PROBE (adv_probe): passively scan and log the COMODULE's whole
+# advertisement (all manufacturer/service data) whenever it CHANGES — to find out
+# if the module signals motion in its advert (so we could detect movement WITHOUT
+# holding a connection = big battery saving). Purely passive (no connection).
+_adv_probe: bool = os.getenv("ADV_PROBE", "0") == "1"
+_adv_last: dict[str, str] = {}
 
 # Devices seen during scans, for the setup UI: address -> {name,rssi,kind,module_mac,ts}.
 _discovered: dict[str, dict] = {}
@@ -1337,6 +1343,35 @@ async def start_motion(_mqtt_client: mqtt.Client) -> None:
     asyncio.create_task(motion_watcher())
 
 
+async def adv_probe_loop() -> None:
+    """DEV: passively scan and log the COMODULE advertisement whenever it changes,
+    to test if movement is visible in the advert (no connection = battery-friendly)."""
+    def cb(device, adv) -> None:
+        if _record(device, adv) != "tracker":
+            return
+        parts = []
+        for cid, val in (adv.manufacturer_data or {}).items():
+            parts.append(f"mfr{cid:04x}={bytes(val).hex()}")
+        for uuid, val in (adv.service_data or {}).items():
+            parts.append(f"svc{uuid[-4:]}={bytes(val).hex()}")
+        payload = " ".join(parts)
+        if _adv_last.get(device.address) != payload:
+            _adv_last[device.address] = payload
+            log.info("ADV PROBE [%s @ %sdBm]: %s", device.address,
+                     getattr(adv, "rssi", "?"), payload)
+
+    while True:
+        if not _adv_probe:
+            await asyncio.sleep(4)
+            continue
+        try:
+            async with _scan_lock, BleakScanner(detection_callback=cb):
+                await asyncio.sleep(25)        # passive listen window
+        except Exception as err:  # noqa: BLE001
+            log.debug("adv probe scan failed: %s", err)
+            await asyncio.sleep(2)
+
+
 # ------------------------------------------------------------- setup UI (Ingress)
 INDEX_HTML = """<!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content='width=device-width,initial-scale=1'><title>Bosch Kiox eBike</title>
@@ -1517,7 +1552,7 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
   if(!$('#pairedCard').classList.contains('hidden')){
     $('#pairedModel').textContent=L.bike_model||L.product_name||L.bike_brand||'Bosch Smart System eBike';
     if(L.address||s.bike)$('#pairedMac').textContent=L.address||s.bike;}
-  $('#devBar').style.display=s.probe?'':'none';
+  $('#devBar').style.display=(s.probe||s.adv_probe)?'':'none';
   $('#bikeTitle').textContent=L.bike_model||L.product_name||L.bike_brand||di.manufacturer||dev.manufacturer||'Bosch eBike';
   $('#bikeSpec').textContent=L.last_updated?ago(L.last_updated):t('no_reading');
   const f=fresh(L.last_updated);
@@ -1609,7 +1644,7 @@ async def _ui_status(_request):
     return web.json_response({"bike": _bike_addr, "locked": _locked_addr,
                               "tracker": _tracker_mac, "tracker_off": _tracker_off,
                               "alarm_off": _alarm_off, "probe": _probe_frames,
-                              "bike_off": _bike_off,
+                              "adv_probe": _adv_probe, "bike_off": _bike_off,
                               "device": {"manufacturer": DEVICE["manufacturer"],
                                          "model": DEVICE["model"]},
                               "last": _last})
@@ -1757,6 +1792,7 @@ async def main() -> None:
     # (it then refreshes when the bike is on or the alarm is armed, idle otherwise).
     asyncio.create_task(read_tracker_battery())
     asyncio.create_task(_persist_last_loop())   # keep the on-disk snapshot fresh
+    asyncio.create_task(adv_probe_loop())       # dev: passive adv logging when enabled
     await ble_loop(_mqtt)
 
 

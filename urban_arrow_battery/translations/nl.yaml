@@ -35,6 +35,14 @@ configuration:
       houdt de tracker verbonden om signalen te reverse-engineeren (bijv. de
       hoofdaccu-vlag). Laat de module-accu sneller leeglopen — laat UIT bij normaal
       gebruik. Zolang 'ie aan staat verschijnt een melding in het paneel.
+  adv_probe:
+    name: Advertentie-probe (ontwikkelaar)
+    description: >-
+      Alleen voor ontwikkeling/diagnostiek. Logt passief de COMODULE-advertentie
+      wanneer die verandert, om te testen of beweging zichtbaar is in de advertentie
+      (dan kan bewegingsdetectie zónder verbinding — batterijvriendelijk). Passief —
+      geen extra verbruik van de module. Houdt de BLE-adapter bezet, dus normale
+      uitlezingen pauzeren zolang 'ie aan staat.
   mqtt_host:
     name: MQTT-host
     description: Optionele MQTT-broker override. Leeg laten om de Mosquitto add-on te gebruiken.
