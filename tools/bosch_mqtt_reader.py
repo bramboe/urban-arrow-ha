@@ -414,7 +414,9 @@ def _recompute_main_battery() -> None:
     if not _charge_hist:
         return
     now = _charge_hist[-1][0]
-    cutoff = now - 6 * 3600
+    # Keep a long horizon: a parked bike reports sparsely, so the reference point
+    # can be many hours old. Trimming too aggressively would leave no comparison.
+    cutoff = now - 48 * 3600
     while _charge_hist and _charge_hist[0][0] < cutoff:
         _charge_hist.pop(0)
     latest = _charge_hist[-1][1]
