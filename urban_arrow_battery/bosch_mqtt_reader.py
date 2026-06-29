@@ -2204,6 +2204,7 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
       <div class=between><div class=big id=cloudState>—</div><span class=pill id=cloudSpeed></span></div>
       <div class=between style="margin-top:10px;font-size:14px"><span class=muted data-i18n=cloud_charge>Module-lading (cloud)</span><b id=cloudCharge>—</b></div>
       <div class=between style="margin-top:6px;font-size:14px"><span class=muted data-i18n=cloud_loc>Locatie</span><b id=cloudLoc>—</b></div>
+      <iframe id=cloudMap title=map style="display:none;width:100%;height:190px;border:0;border-radius:10px;margin-top:10px" loading=lazy referrerpolicy=no-referrer></iframe>
       <div class=sub id=cloudUpd style="margin-top:8px"></div></div>
   </div>
 
@@ -2352,9 +2353,14 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
     const cs=$('#cloudSpeed');
     if(CLD.speed!=null){cs.style.display='';cs.style.background='rgba(3,169,244,.16)';cs.style.color='#03a9f4';cs.textContent=CLD.speed+' km/h';}else cs.style.display='none';
     $('#cloudCharge').textContent=CLD.module_charge!=null?CLD.module_charge+'%':'—';
+    const mp=$('#cloudMap');
     if(CLD.latitude!=null){const ll=CLD.latitude.toFixed(5)+', '+CLD.longitude.toFixed(5);
-      $('#cloudLoc').innerHTML=`<a href="https://www.google.com/maps?q=${CLD.latitude},${CLD.longitude}" target="_blank" rel="noopener">${ll}</a>`;}
-    else $('#cloudLoc').textContent='—';
+      $('#cloudLoc').innerHTML=`<a href="https://www.google.com/maps?q=${CLD.latitude},${CLD.longitude}" target="_blank" rel="noopener">${ll}</a>`;
+      const key=CLD.latitude.toFixed(5)+','+CLD.longitude.toFixed(5);
+      if(mp.dataset.k!==key){mp.dataset.k=key;
+        mp.src=`https://maps.google.com/maps?q=${CLD.latitude},${CLD.longitude}&z=16&output=embed`;}
+      mp.style.display='';}
+    else {$('#cloudLoc').textContent='—';mp.style.display='none';}
     $('#cloudUpd').textContent=CLD.ts?ago(CLD.ts):'';}
   else $('#cloudCard').style.display='none';
   // security
