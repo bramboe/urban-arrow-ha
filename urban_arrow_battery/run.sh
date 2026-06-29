@@ -38,6 +38,8 @@ if bashio::config.false 'presence_alarm'; then export PRESENCE_ALARM=0; else exp
 # TEMPORARY: log distinct COMODULE 155e status frames (find the main-battery flag).
 if bashio::config.true 'probe_frames'; then export PROBE_FRAMES=1; else export PROBE_FRAMES=0; fi
 if bashio::config.true 'adv_probe'; then export ADV_PROBE=1; else export ADV_PROBE=0; fi
+# TEMPORARY: log when the Bosch hub starts/stops advertising (wake-on-motion test).
+if bashio::config.true 'hub_probe'; then export HUB_PROBE=1; else export HUB_PROBE=0; fi
 
 bashio::log.info "Starting Urban Arrow battery reader (${BIKE_ADDRESS:-auto-detect})"
 exec python3 /bosch_mqtt_reader.py

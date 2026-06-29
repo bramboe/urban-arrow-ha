@@ -54,6 +54,15 @@ configuration:
       timing of de scan-response. Geen extra verbruik van de module, maar houdt de
       BLE-adapter bezet (normale uitlezingen en aanwezigheid pauzeren). Draai 'm
       disarmed en zet 'm daarna weer uit.
+  hub_probe:
+    name: Hub wake-on-motion-probe (ontwikkelaar)
+    description: >-
+      Alleen voor ontwikkeling/diagnostiek. Test of de Bosch-HUB gaat adverteren
+      wanneer de fiets beweegt (wake-on-motion) — dat zou een bewegingssignaal geven
+      dat de grote fietsaccu gebruikt in plaats van de tracker-module. Logt passief
+      het verschijnen/verdwijnen van de hub-advertentie zonder te verbinden; pauzeert
+      de normale uitleeslus zolang 'ie aan staat. Beweeg de fiets zonder iets in te
+      drukken, en zet 'm daarna weer uit.
   mqtt_host:
     name: MQTT-host
     description: Optionele MQTT-broker override. Leeg laten om de Mosquitto add-on te gebruiken.

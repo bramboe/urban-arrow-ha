@@ -50,6 +50,14 @@ configuration:
       changes — to see if movement shows up in the advert timing or scan-response.
       No battery drain on the module, but it holds the BLE adapter, so normal reads
       and presence pause while it is on. Run it disarmed and turn it off afterwards.
+  hub_probe:
+    name: Hub wake-on-motion probe (developer)
+    description: >-
+      Developer/diagnostic only. Tests whether the Bosch HUB starts advertising when
+      the bike is moved (wake-on-motion) — which would give a movement signal that
+      uses the bike's big battery, not the tracker module. Passively logs the hub
+      advert appearing/disappearing without connecting; pauses the normal read loop
+      while on. Move the bike without pressing anything, then turn this off again.
   mqtt_host:
     name: MQTT host
     description: Optional MQTT broker override. Leave empty to use the Mosquitto add-on.

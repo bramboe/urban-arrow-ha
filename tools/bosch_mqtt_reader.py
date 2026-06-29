@@ -245,6 +245,11 @@ _probe_last: dict[int, bytes] = {}
 # holding a connection = big battery saving). Purely passive (no connection).
 _adv_probe: bool = os.getenv("ADV_PROBE", "0") == "1"
 _adv_last: dict[str, str] = {}
+# DEVELOPER HUB PROBE (hub_probe): passively test whether the Bosch HUB starts
+# advertising on motion (wake-on-motion). If it does, that's a zero-module-cost
+# movement signal using the bike's big battery. Logs the hub advert appearing/
+# disappearing WITHOUT connecting; pauses the normal bike read loop while on.
+_hub_probe: bool = os.getenv("HUB_PROBE", "0") == "1"
 
 # Devices seen during scans, for the setup UI: address -> {name,rssi,kind,module_mac,ts}.
 _discovered: dict[str, dict] = {}
@@ -1142,6 +1147,9 @@ async def ble_loop(mqtt_client: mqtt.Client) -> None:
                 publish_status("No bike added", "OFF")
                 await asyncio.sleep(4)
                 continue
+            if _hub_probe:                    # dev: let hub_probe own the adapter
+                await asyncio.sleep(4)
+                continue
             device = await find_bike(timeout=15.0)
             auto = _bike_addr is None
             if device is None:
@@ -1418,10 +1426,10 @@ async def presence_loop() -> None:
                 was_present = False
                 await asyncio.sleep(PRESENCE_GAP)
                 continue
-            if _adv_probe:
-                # The adv-probe diagnostic holds the scan adapter continuously, so
-                # presence scans would starve and falsely flip to "out of range"
-                # (and could trip the alarm). Hold the last state while it runs.
+            if _adv_probe or _hub_probe:
+                # A diagnostic probe holds the scan adapter continuously, so presence
+                # scans would starve and falsely flip to "out of range" (and could
+                # trip the alarm). Hold the last state while a probe runs.
                 await asyncio.sleep(PRESENCE_GAP)
                 continue
             now = time.time()
@@ -1448,12 +1456,53 @@ async def presence_loop() -> None:
         await asyncio.sleep(PRESENCE_GAP)
 
 
+async def hub_probe_loop() -> None:
+    """DEV (hub_probe): passively test whether the Bosch HUB advertises on motion
+    (wake-on-motion) — a zero-module-cost movement signal that uses the bike's big
+    battery, not the tracker. Logs when the 'smart system eBike' advert appears /
+    disappears, with RSSI, WITHOUT connecting. The normal read loop is paused while
+    on (see ble_loop) so its connect attempts don't muddy the advertising picture.
+    Test: leave the bike at rest, then move it WITHOUT pressing anything, and watch
+    for 'HUB ADV appeared'."""
+    GONE_AFTER = 15.0
+    last_seen: dict[str, float] = {}
+    present: dict[str, bool] = {}
+
+    def cb(device, adv) -> None:
+        if NAME_MATCH not in (device.name or "").lower():
+            return
+        addr = device.address
+        last_seen[addr] = time.monotonic()
+        if not present.get(addr):
+            present[addr] = True
+            log.info("HUB ADV appeared [%s @ %sdBm] '%s'", addr,
+                     getattr(adv, "rssi", "?"), device.name or "")
+
+    while True:
+        if not _hub_probe:
+            await asyncio.sleep(4)
+            continue
+        try:
+            async with _scan_lock, BleakScanner(detection_callback=cb):
+                while _hub_probe:
+                    await asyncio.sleep(3)
+                    now = time.monotonic()
+                    for addr in list(present):
+                        if present[addr] and now - last_seen.get(addr, 0) > GONE_AFTER:
+                            present[addr] = False
+                            log.info("HUB ADV gone [%s] (silent %.0fs)", addr, GONE_AFTER)
+        except Exception as err:  # noqa: BLE001
+            log.debug("hub probe scan failed: %s", err)
+            await asyncio.sleep(2)
+
+
 async def start_motion(_mqtt_client: mqtt.Client) -> None:
     """Launch the self-resolving motion watcher (no-op work if disabled)."""
     publish_motion(False)
     asyncio.create_task(motion_watcher())
     publish_present(False)
     asyncio.create_task(presence_loop())
+    asyncio.create_task(hub_probe_loop())
 
 
 async def adv_probe_loop() -> None:
@@ -1704,7 +1753,7 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
   if(!$('#pairedCard').classList.contains('hidden')){
     $('#pairedModel').textContent=L.bike_model||L.product_name||L.bike_brand||'Bosch Smart System eBike';
     if(L.address||s.bike)$('#pairedMac').textContent=L.address||s.bike;}
-  $('#devBar').style.display=(s.probe||s.adv_probe)?'':'none';
+  $('#devBar').style.display=(s.probe||s.adv_probe||s.hub_probe)?'':'none';
   $('#bikeTitle').textContent=L.bike_model||L.product_name||L.bike_brand||di.manufacturer||dev.manufacturer||'Bosch eBike';
   $('#bikeSpec').textContent=L.last_updated?ago(L.last_updated):t('no_reading');
   const f=fresh(L.last_updated);
@@ -1800,7 +1849,8 @@ async def _ui_status(_request):
     return web.json_response({"bike": _bike_addr, "locked": _locked_addr,
                               "tracker": _tracker_mac, "tracker_off": _tracker_off,
                               "alarm_off": _alarm_off, "probe": _probe_frames,
-                              "adv_probe": _adv_probe, "bike_off": _bike_off,
+                              "adv_probe": _adv_probe, "hub_probe": _hub_probe,
+                              "bike_off": _bike_off,
                               "presence_alarm": _presence_alarm,
                               "device": {"manufacturer": DEVICE["manufacturer"],
                                          "model": DEVICE["model"]},

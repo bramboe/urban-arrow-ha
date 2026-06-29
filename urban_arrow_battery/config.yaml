@@ -1,5 +1,5 @@
 name: Bosch Kiox eBike
-version: "2.31.0"
+version: "2.32.0"
 slug: urban_arrow_battery
 description: >-
   Reads a Bosch Smart System eBike (Kiox display) over Bluetooth — battery, range
@@ -32,6 +32,7 @@ options:
   presence_alarm: true
   probe_frames: false
   adv_probe: false
+  hub_probe: false
   mqtt_host: ""
   mqtt_port: 1883
   mqtt_user: ""
@@ -59,6 +60,9 @@ schema:
   # TEMPORARY diagnostic: passively log the COMODULE advertisement when it changes
   # (to test if movement is visible in the advert). Passive — no connection.
   adv_probe: bool?
+  # TEMPORARY diagnostic: passively log when the Bosch hub starts/stops advertising
+  # (to test wake-on-motion). No connection; pauses the normal read loop while on.
+  hub_probe: bool?
   mqtt_host: str?
   mqtt_port: int?
   mqtt_user: str?
