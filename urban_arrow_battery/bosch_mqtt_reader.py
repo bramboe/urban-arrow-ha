@@ -368,12 +368,33 @@ def publish_main_battery(present: bool) -> None:
         _mqtt.publish(MAIN_BATTERY_TOPIC, "ON" if present else "OFF", retain=True)
 
 
+_CHARGE_FILE = "/data/charge.json"
+
+
+def _charge_load() -> None:
+    """Restore the module-charge history from disk so the main-battery inference
+    survives restarts (it otherwise loses its window every redeploy)."""
+    global _charge_hist
+    try:
+        with open(_CHARGE_FILE) as fh:
+            data = json.load(fh)
+        _charge_hist = [(float(t), int(p)) for t, p in data if 0 <= int(p) <= 100]
+        _charge_hist.sort(key=lambda x: x[0])
+        _recompute_main_battery()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _charge_save() -> None:
+    try:
+        with open(_CHARGE_FILE, "w") as fh:
+            json.dump(_charge_hist[-500:], fh)
+    except Exception as err:  # noqa: BLE001
+        log.debug("charge save: %s", err)
+
+
 def _record_charge(pct, ts: "float | None" = None) -> None:
-    """Feed a module-charge sample (optionally historical, for cloud seeding) and
-    re-infer whether the main battery is in. Rising or near-full = in (charging);
-    a sustained drop over the window = out. Trend is measured against the LATEST
-    sample's time, so seeded historical samples work the same as live ones."""
-    global _main_battery_state
+    """Feed a module-charge sample (optionally historical, for cloud seeding)."""
     try:
         pct = int(pct)
     except Exception:  # noqa: BLE001
@@ -381,31 +402,42 @@ def _record_charge(pct, ts: "float | None" = None) -> None:
     if not (0 <= pct <= 100):
         return
     _charge_hist.append((ts if ts is not None else time.time(), pct))
-    _charge_hist.sort(key=lambda x: x[0])       # keep chronological (seeding may add older)
-    now = _charge_hist[-1][0]                    # reference = newest sample time
+    _charge_hist.sort(key=lambda x: x[0])       # keep chronological (seeding adds older)
+    _recompute_main_battery()
+
+
+def _recompute_main_battery() -> None:
+    """Infer whether the main battery is in from the charge trend. Rising or
+    near-full = in (charging); a sustained drop over the window = out. Measured
+    against the LATEST sample's time, so seeded/persisted history works the same."""
+    global _main_battery_state
+    if not _charge_hist:
+        return
+    now = _charge_hist[-1][0]
     cutoff = now - 6 * 3600
     while _charge_hist and _charge_hist[0][0] < cutoff:
         _charge_hist.pop(0)
+    latest = _charge_hist[-1][1]
     ref = None                                  # newest sample older than the window
     for t, p in _charge_hist:
         if now - t >= MAIN_BATT_WINDOW:
             ref = p
     state = _main_battery_state
     if ref is not None:
-        delta = pct - ref
+        delta = latest - ref
         if delta > 0:
             state = "in"
         elif delta < -1:
             state = "out"
-        elif pct >= 97:
+        elif latest >= 97:
             state = "in"
-    elif pct >= 97:
+    elif latest >= 97:
         state = "in"
     if state != _main_battery_state and state is not None:
         _main_battery_state = state
         _last["main_battery"] = (state == "in")
         publish_main_battery(state == "in")
-        log.info("main battery inferred: %s (module %s%%)", state, pct)
+        log.info("main battery inferred: %s (module %s%%)", state, latest)
 
 
 def publish_alarm(state: str) -> None:
@@ -1915,7 +1947,7 @@ async def pon_cloud_loop() -> None:
                     return _dt.datetime.fromisoformat(str(s).replace("Z", "+00:00")).timestamp()
                 except Exception:  # noqa: BLE001
                     return None
-            frm = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 2 * 3600))
+            frm = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 24 * 3600))
             to = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             hist = await api(f"/v1/bikes/{st['bike']}/IOT/history"
                              f"?from={frm}&to={to}&offset=0&limit=5000")
@@ -2530,12 +2562,14 @@ async def _persist_last_loop() -> None:
     while True:
         await asyncio.sleep(20)
         _save_last()
+        _charge_save()
 
 
 async def main() -> None:
     global _mqtt, _loop
     _loop = asyncio.get_running_loop()
     _load_last()        # seed the panel from disk before the UI serves /api/status
+    _charge_load()      # restore module-charge trend so main-battery survives restarts
     _mqtt = make_mqtt()
     log.info("reader v2.0 started (%s, cooldown %ss)",
              _bike_addr or "auto-detect", COOLDOWN)
