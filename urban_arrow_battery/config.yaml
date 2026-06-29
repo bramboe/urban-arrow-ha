@@ -1,5 +1,5 @@
 name: Bosch Kiox eBike
-version: "2.34.0"
+version: "2.35.0"
 slug: urban_arrow_battery
 description: >-
   Reads a Bosch Smart System eBike (Kiox display) over Bluetooth — battery, range
@@ -35,6 +35,10 @@ options:
   ble_proxy_host: ""
   ble_proxy_port: 6053
   ble_proxy_key: ""
+  pon_client_id: ""
+  pon_refresh_token: ""
+  pon_bike_id: ""
+  pon_poll: 120
   probe_frames: false
   adv_probe: false
   hub_probe: false
@@ -63,6 +67,13 @@ schema:
   ble_proxy_host: str?
   ble_proxy_port: int?
   ble_proxy_key: str?
+  # Optional PON Connected Bike CLOUD poll (additive, no BLE): GPS location, speed,
+  # module charge over the internet. Needs an OAuth app client_id + a refresh_token
+  # (offline_access). bike_id optional (auto-detected). poll = seconds between polls.
+  pon_client_id: str?
+  pon_refresh_token: str?
+  pon_bike_id: str?
+  pon_poll: int?
   # TEMPORARY diagnostic: log distinct COMODULE 155e status frames to find which
   # byte flips when the main battery is removed/inserted. Keeps the tracker
   # connected (no need to arm). Turn off again after the test.

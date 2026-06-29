@@ -53,6 +53,23 @@ configuration:
       De API-encryptiesleutel (noise PSK) van het ESPHome-apparaat — te vinden onder
       Instellingen → Apparaten & diensten → dat ESPHome-apparaat → Encryptiesleutel.
       Verplicht als er een proxy-host is ingevuld.
+  pon_client_id:
+    name: PON-cloud — application key (client ID)
+    description: >-
+      Optionele cloud-poll (additief, zonder Bluetooth). De client-ID van je app in
+      het PON.Bike developer-portal (data-act.pon.bike). Levert GPS-locatie, snelheid
+      en module-lading via internet. Leeg laten om uit te schakelen.
+  pon_refresh_token:
+    name: PON-cloud — refresh token
+    description: >-
+      Het OAuth refresh-token (offline_access) van je PON-app. De add-on haalt daarmee
+      automatisch access-tokens op. Geroteerde tokens worden bewaard en hergebruikt.
+  pon_bike_id:
+    name: PON-cloud — bike ID (optioneel)
+    description: Specifieke bikeId om te pollen. Leeg laten om de eerste fiets automatisch te kiezen.
+  pon_poll:
+    name: PON-cloud — poll-interval (seconden)
+    description: Aantal seconden tussen cloud-polls (standaard 120).
   probe_frames:
     name: COMODULE-probe (ontwikkelaar)
     description: >-

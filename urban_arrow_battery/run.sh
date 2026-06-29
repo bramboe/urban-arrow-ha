@@ -14,6 +14,12 @@ export BLE_PROXY_HOST="$(bashio::config 'ble_proxy_host')"
 export BLE_PROXY_PORT="$(bashio::config 'ble_proxy_port')"
 export BLE_PROXY_KEY="$(bashio::config 'ble_proxy_key')"
 
+# Optional PON Connected Bike cloud poll (additive, no BLE).
+export PON_CLIENT_ID="$(bashio::config 'pon_client_id')"
+export PON_REFRESH="$(bashio::config 'pon_refresh_token')"
+export PON_BIKE_ID="$(bashio::config 'pon_bike_id')"
+export PON_POLL="$(bashio::config 'pon_poll')"
+
 # MQTT: use the configured override, else the Home Assistant MQTT service.
 if bashio::config.has_value 'mqtt_host'; then
     export MQTT_HOST="$(bashio::config 'mqtt_host')"

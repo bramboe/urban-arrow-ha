@@ -50,6 +50,23 @@ configuration:
       The ESPHome device's API encryption key (noise PSK), found under Settings →
       Devices & Services → that ESPHome device → Encryption key. Required if a proxy
       host is set.
+  pon_client_id:
+    name: PON cloud — application key (client ID)
+    description: >-
+      Optional cloud poll (additive, no Bluetooth). The client ID of your app in the
+      PON.Bike developer portal (data-act.pon.bike). Enables GPS location, speed and
+      module charge over the internet. Leave empty to disable.
+  pon_refresh_token:
+    name: PON cloud — refresh token
+    description: >-
+      The OAuth refresh token (offline_access) for your PON app. The add-on uses it
+      to fetch access tokens automatically. Rotated tokens are stored and reused.
+  pon_bike_id:
+    name: PON cloud — bike ID (optional)
+    description: Specific bikeId to poll. Leave empty to auto-detect the first bike.
+  pon_poll:
+    name: PON cloud — poll interval (seconds)
+    description: Seconds between cloud polls (default 120).
   probe_frames:
     name: COMODULE probe (developer)
     description: >-

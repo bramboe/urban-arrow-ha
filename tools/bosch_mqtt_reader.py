@@ -230,6 +230,38 @@ _ext_motion: "str | None" = (_cfg0.get("ext_motion") or "").strip() or None
 # Home Assistant core API via the Supervisor proxy (needs homeassistant_api: true).
 SUPERVISOR_TOKEN: str = os.getenv("SUPERVISOR_TOKEN", "")
 HA_API = "http://supervisor/core/api"
+# Optional PON Connected Bike CLOUD poll (additive, no BLE): GPS location, module
+# charge and speed over the internet. Needs an OAuth app client_id + a refresh_token
+# (offline_access). Uses the refresh-token grant; rotated tokens persist to /data.
+PON_BASE = "https://data-act.connected.pon.bike/api"
+PON_TOKEN_URL = "https://consumer.login.pon.bike/oauth/token"
+PON_CLIENT_ID: str = os.getenv("PON_CLIENT_ID", "").strip()
+PON_BIKE_ID: str = os.getenv("PON_BIKE_ID", "").strip()
+PON_POLL: float = float(os.getenv("PON_POLL", "120") or 120)
+PON_FILE = "/data/pon.json"
+CLOUD_TOPIC = f"{NODE}/cloud"
+
+
+def _pon_load_refresh() -> "str | None":
+    try:
+        with open(PON_FILE) as fh:
+            rt = (json.load(fh).get("refresh_token") or "").strip()
+            if rt:
+                return rt
+    except Exception:  # noqa: BLE001
+        pass
+    return (os.getenv("PON_REFRESH", "").strip() or None)
+
+
+def _pon_save_refresh(rt: str) -> None:
+    try:
+        with open(PON_FILE, "w") as fh:
+            json.dump({"refresh_token": rt}, fh)
+    except Exception as err:  # noqa: BLE001
+        log.warning("pon save: %s", err)
+
+
+_pon_refresh: "str | None" = _pon_load_refresh()
 # Alarm (HomeKit Security System) is optional on top of the motion sensor.
 _alarm_off: bool = bool(_cfg0.get("alarm_off", False))
 # Battery-friendly: only hold the tracker connection while the alarm is armed
@@ -781,6 +813,63 @@ def _publish_discovery(client: mqtt.Client) -> None:
         }),
         retain=True,
     )
+
+    # Cloud (PON Connected Bike) entities — only when the cloud poll is configured;
+    # otherwise clear them so no orphaned "unknown" entities linger.
+    cloud_on = bool(PON_CLIENT_ID and _pon_refresh)
+    if cloud_on:
+        client.publish(
+            f"{DISC_PREFIX}/device_tracker/{NODE}/location/config",
+            json.dumps({
+                "name": "Location",
+                "unique_id": f"{NODE}_location",
+                "state_topic": CLOUD_TOPIC,
+                "value_template": "{{ value_json.loc_state }}",
+                "json_attributes_topic": CLOUD_TOPIC,
+                "source_type": "gps",
+                "icon": "mdi:map-marker",
+                "device": DEVICE,
+            }), retain=True)
+        client.publish(
+            f"{DISC_PREFIX}/sensor/{NODE}/cloud_speed/config",
+            json.dumps({
+                "name": "Speed",
+                "unique_id": f"{NODE}_cloud_speed",
+                "state_topic": CLOUD_TOPIC,
+                "value_template": "{{ value_json.speed | default(0) }}",
+                "device_class": "speed",
+                "unit_of_measurement": "km/h",
+                "icon": "mdi:speedometer",
+                "device": DEVICE,
+            }), retain=True)
+        client.publish(
+            f"{DISC_PREFIX}/binary_sensor/{NODE}/in_use/config",
+            json.dumps({
+                "name": "In use",
+                "unique_id": f"{NODE}_in_use",
+                "state_topic": CLOUD_TOPIC,
+                "value_template": "{{ 'ON' if value_json.in_use else 'OFF' }}",
+                "device_class": "moving",
+                "icon": "mdi:bike-fast",
+                "device": DEVICE,
+            }), retain=True)
+        client.publish(
+            f"{DISC_PREFIX}/sensor/{NODE}/cloud_module_charge/config",
+            json.dumps({
+                "name": "Module charge (cloud)",
+                "unique_id": f"{NODE}_cloud_module_charge",
+                "state_topic": CLOUD_TOPIC,
+                "value_template": "{{ value_json.module_charge | default('') }}",
+                "device_class": "battery",
+                "unit_of_measurement": "%",
+                "entity_category": "diagnostic",
+                "device": DEVICE,
+            }), retain=True)
+    else:
+        for obj, dom in (("location", "device_tracker"), ("cloud_speed", "sensor"),
+                         ("in_use", "binary_sensor"),
+                         ("cloud_module_charge", "sensor")):
+            client.publish(f"{DISC_PREFIX}/{dom}/{NODE}/{obj}/config", "", retain=True)
 
     # Remove sensors published by earlier versions.
     for old in ("odometer", "battery2"):
@@ -1674,6 +1763,111 @@ async def ext_motion_loop() -> None:
         await asyncio.sleep(3)
 
 
+async def _http_json(method: str, url: str, *, headers=None, data=None):
+    """Tiny aiohttp JSON helper. Returns (status, parsed_json|None)."""
+    if aiohttp is None:
+        return None, None
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.request(method, url, headers=headers, data=data,
+                                 timeout=aiohttp.ClientTimeout(total=20)) as r:
+                txt = await r.text()
+                try:
+                    return r.status, json.loads(txt)
+                except Exception:  # noqa: BLE001
+                    return r.status, None
+    except Exception as err:  # noqa: BLE001
+        log.debug("http %s %s: %s", method, url, err)
+        return None, None
+
+
+async def pon_cloud_loop() -> None:
+    """Additive PON cloud poll (no BLE, no module-battery cost): publish GPS location,
+    module charge and speed/in-use from the Connected Bike REST API to HA. Runs only
+    when PON_CLIENT_ID + a refresh_token are configured; leaves the BLE path alone."""
+    global _pon_refresh
+    if not PON_CLIENT_ID or not _pon_refresh:
+        return
+    st = {"access": None, "exp": 0.0, "bike": PON_BIKE_ID or None}
+
+    async def ensure_token() -> bool:
+        if st["access"] and time.time() < st["exp"] - 60:
+            return True
+        s, js = await _http_json("POST", PON_TOKEN_URL, data={
+            "grant_type": "refresh_token", "client_id": PON_CLIENT_ID,
+            "refresh_token": _pon_refresh})
+        if s == 200 and js and js.get("access_token"):
+            st["access"] = js["access_token"]
+            st["exp"] = time.time() + float(js.get("expires_in", 3600))
+            rt = js.get("refresh_token")
+            if rt and rt != _pon_refresh:        # Auth0 rotates refresh tokens
+                globals()["_pon_refresh"] = rt
+                _pon_save_refresh(rt)
+            return True
+        log.warning("PON token refresh failed (status %s)", s)
+        return False
+
+    async def api(path: str):
+        if not await ensure_token():
+            return None
+        hdr = {"Authorization": "Bearer " + st["access"], "Accept": "application/json"}
+        s, js = await _http_json("GET", PON_BASE + path, headers=hdr)
+        if s == 401:                              # token died early — refresh once
+            st["access"] = None
+            if await ensure_token():
+                hdr["Authorization"] = "Bearer " + st["access"]
+                s, js = await _http_json("GET", PON_BASE + path, headers=hdr)
+        return js if s == 200 else None
+
+    log.info("PON cloud poll starting (every %ss)", int(PON_POLL))
+    while True:
+        try:
+            if not st["bike"]:
+                info = await api("/v1/bikes/info")
+                if isinstance(info, list) and info:
+                    st["bike"] = info[0].get("bikeId")
+            payload: dict = {}
+            lk = await api("/v1/bikes/last-known-states")
+            entry = None
+            if isinstance(lk, list):
+                entry = next((b for b in lk if b.get("bikeId") == st["bike"]),
+                             lk[0] if lk else None)
+            elif isinstance(lk, dict):
+                entry = lk
+            if entry:
+                loc = (entry.get("location") or {}).get("coordinate") or {}
+                if loc.get("latitude") is not None and loc.get("longitude") is not None:
+                    payload["latitude"] = loc["latitude"]
+                    payload["longitude"] = loc["longitude"]
+                    payload["gps_accuracy"] = loc.get("accuracyRadius") or 0
+                iot = entry.get("iotTelemetry") or {}
+                if iot.get("moduleCharge") is not None:
+                    payload["module_charge"] = iot["moduleCharge"]
+                if entry.get("odometer") is not None:
+                    payload["odometer"] = entry["odometer"]
+            if st["bike"]:
+                frm = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 900))
+                to = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                hist = await api(f"/v1/bikes/{st['bike']}/TELEMETRY/history"
+                                 f"?from={frm}&to={to}&offset=0&limit=200")
+                items = hist.get("items") if isinstance(hist, dict) else None
+                if isinstance(items, list):
+                    for it in reversed(items):
+                        if isinstance(it, dict) and it.get("speedInKmh") is not None:
+                            payload["speed"] = it["speedInKmh"]
+                            break
+            if payload:
+                payload["in_use"] = bool(payload.get("speed", 0) > 0)
+                payload["loc_state"] = "moving" if payload["in_use"] else "parked"
+                payload["ts"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+                _last["cloud"] = payload
+                if _mqtt is not None:
+                    _mqtt.publish(CLOUD_TOPIC, json.dumps(payload), retain=True)
+        except Exception as err:  # noqa: BLE001
+            log.warning("PON cloud loop: %s: %s", type(err).__name__, err)
+        await asyncio.sleep(PON_POLL)
+
+
 async def start_motion(_mqtt_client: mqtt.Client) -> None:
     """Launch the self-resolving motion watcher (no-op work if disabled)."""
     publish_motion(False)
@@ -2219,6 +2413,7 @@ async def main() -> None:
     asyncio.create_task(read_tracker_battery())
     asyncio.create_task(_persist_last_loop())   # keep the on-disk snapshot fresh
     asyncio.create_task(adv_probe_loop())       # dev: passive adv logging when enabled
+    asyncio.create_task(pon_cloud_loop())       # additive cloud poll (no BLE)
     await ble_loop(_mqtt)
 
 
