@@ -2190,6 +2190,8 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
 .hidden{display:none}h2{font-size:17px;margin:0 0 10px}.set p{margin:6px 0 14px}
 .src{font-size:11px;margin-left:6px;opacity:.7;vertical-align:middle;cursor:help}
 #cloudMap .leaflet-control-attribution{font-size:9px}
+#cloudMap.fs{position:fixed!important;inset:0!important;width:100%!important;height:100%!important;z-index:99999;border-radius:0;margin:0}
+.leaflet-bar a.fsbtn{display:flex;align-items:center;justify-content:center;color:#333}
 </style>
 <link rel=stylesheet href="leaflet.css">
 <script src="leaflet.js"></script>
@@ -2405,6 +2407,8 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
           window.L.tileLayer('tile/{z}/{x}/{y}',{maxZoom:20,attribution:'© OpenStreetMap, © CARTO'}).addTo(window._lmap);
           const bikeIcon=window.L.divIcon({className:'',iconSize:[38,38],iconAnchor:[19,19],html:`<div style="background:#03a9f4;width:38px;height:38px;border-radius:50%;border:3px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center"><svg viewBox="0 0 24 24" width="20" height="20" fill="#fff"><path d="M5,20.5A3.5,3.5 0 0,1 1.5,17A3.5,3.5 0 0,1 5,13.5A3.5,3.5 0 0,1 8.5,17A3.5,3.5 0 0,1 5,20.5M5,12A5,5 0 0,0 0,17A5,5 0 0,0 5,22A5,5 0 0,0 10,17A5,5 0 0,0 5,12M14.8,10H19V8.2H15.8L13.86,4.93C13.57,4.43 13,4.1 12.4,4.1C11.93,4.1 11.5,4.29 11.2,4.6L7.5,8.29C7.19,8.6 7,9 7,9.5C7,10.13 7.33,10.66 7.85,10.97L11.2,13V18H13V11.5L10.75,9.85L13.07,7.5M19,12A5,5 0 0,0 14,17A5,5 0 0,0 19,22A5,5 0 0,0 24,17A5,5 0 0,0 19,12M19,20.5A3.5,3.5 0 0,1 15.5,17A3.5,3.5 0 0,1 19,13.5A3.5,3.5 0 0,1 22.5,17A3.5,3.5 0 0,1 19,20.5M16,4.8C17,4.8 17.8,4 17.8,3C17.8,2 17,1.2 16,1.2C15,1.2 14.2,2 14.2,3C14.2,4 15,4.8 16,4.8Z"/></svg></div>`});
           window._lmark=window.L.marker([la,lo],{icon:bikeIcon}).addTo(window._lmap);
+          const Fs=window.L.Control.extend({onAdd:function(){const b=window.L.DomUtil.create('a','fsbtn');b.href='#';b.title='Fullscreen';b.innerHTML=`<svg viewBox="0 0 24 24" width=18 height=18><path fill=currentColor d="M5,5H10V7H7V10H5V5M14,5H19V10H17V7H14V5M17,14H19V19H14V17H17V14M10,17V19H5V14H7V17H10Z"/></svg>`;window.L.DomEvent.on(b,'click',window.L.DomEvent.stop).on(b,'click',function(){mp.classList.toggle('fs');setTimeout(function(){try{window._lmap.invalidateSize();}catch(e){}},120);});return b;}});
+          window._lmap.addControl(new Fs({position:'topright'}));
           window._lmap.setView([la,lo],zWant);window._lzoom=zWant;
           setTimeout(()=>{try{window._lmap.invalidateSize();}catch(e){}},300);}
         else{window._lmark.setLatLng([la,lo]);
