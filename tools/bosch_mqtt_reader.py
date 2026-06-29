@@ -2191,8 +2191,8 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
 .src{font-size:11px;margin-left:6px;opacity:.7;vertical-align:middle;cursor:help}
 #cloudMap .leaflet-control-attribution{font-size:9px}
 </style>
-<link rel=stylesheet href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel=stylesheet href="leaflet.css">
+<script src="leaflet.js"></script>
 </head><body><div class=wrap>
 <div class=tabs>
   <button class='tab on' id=tabDash data-i18n=tab_dash onclick="tab('dash')">Dashboard</button>
@@ -2399,7 +2399,7 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
     const mp=$('#cloudMap');
     if(window.L && CLD.latitude!=null){const la=CLD.latitude,lo=CLD.longitude;mp.style.display='';
       if(!window._lmap){window._lmap=L.map(mp,{zoomControl:true}).setView([la,lo],16);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{maxZoom:20,attribution:'© OpenStreetMap, © CARTO'}).addTo(window._lmap);
+        L.tileLayer('tile/{z}/{x}/{y}',{maxZoom:20,attribution:'© OpenStreetMap, © CARTO'}).addTo(window._lmap);
         window._lmark=L.circleMarker([la,lo],{radius:9,color:'#fff',weight:3,fillColor:'#03a9f4',fillOpacity:1}).addTo(window._lmap);
         setTimeout(()=>window._lmap.invalidateSize(),150);}
       else{window._lmap.setView([la,lo]);window._lmark.setLatLng([la,lo]);}
@@ -2583,6 +2583,38 @@ async def _ui_set_ext_motion(request):
     return web.json_response({"ok": True, "ext_motion": _ext_motion})
 
 
+_tile_cache: dict = {}
+
+
+async def _ui_tile(request):
+    """Proxy CARTO light map tiles through the add-on (same origin) so they aren't
+    blocked by Home Assistant's ingress CSP. Small in-memory cache."""
+    z = request.match_info["z"]
+    x = request.match_info["x"]
+    y = request.match_info["y"].split(".")[0]
+    if not (z.isdigit() and x.isdigit() and y.isdigit()):
+        return web.Response(status=400)
+    key = f"{z}/{x}/{y}"
+    hdr = {"Cache-Control": "max-age=86400"}
+    if key in _tile_cache:
+        return web.Response(body=_tile_cache[key], content_type="image/png", headers=hdr)
+    if aiohttp is None:
+        return web.Response(status=503)
+    url = f"https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, timeout=aiohttp.ClientTimeout(total=15)) as r:
+                if r.status != 200:
+                    return web.Response(status=r.status)
+                data = await r.read()
+        if len(_tile_cache) < 800:
+            _tile_cache[key] = data
+        return web.Response(body=data, content_type="image/png", headers=hdr)
+    except Exception as err:  # noqa: BLE001
+        log.debug("tile proxy %s: %s", key, err)
+        return web.Response(status=502)
+
+
 async def start_web() -> None:
     if web is None:
         log.warning("setup UI unavailable (aiohttp missing)")
@@ -2591,6 +2623,9 @@ async def start_web() -> None:
     app.add_routes([
         web.get("/", lambda r: web.Response(text=INDEX_HTML, content_type="text/html")),
         web.get("/bike.png", lambda r: web.FileResponse("/bike.png")),
+        web.get("/leaflet.js", lambda r: web.FileResponse("/leaflet.js")),
+        web.get("/leaflet.css", lambda r: web.FileResponse("/leaflet.css")),
+        web.get("/tile/{z}/{x}/{y}", _ui_tile),
         web.get("/api/status", _ui_status),
         web.post("/api/scan", _ui_scan),
         web.post("/api/select_bike", _ui_select_bike),

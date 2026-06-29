@@ -11,6 +11,8 @@ COPY bosch_mqtt_reader.py /bosch_mqtt_reader.py
 COPY skus.json /skus.json
 COPY comp_init.txt /comp_init.txt
 COPY bike.png /bike.png
+COPY leaflet.js /leaflet.js
+COPY leaflet.css /leaflet.css
 RUN chmod a+x /run.sh
 
 CMD [ "/run.sh" ]
