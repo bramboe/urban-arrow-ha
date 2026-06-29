@@ -2346,16 +2346,16 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
   else if(L.main_battery===false){mb.textContent='🔋 '+t('mb_out');}
   else mb.textContent='';
   // cloud (PON) card — only when cloud data has arrived
-  const C=L.cloud;
-  if(C){$('#cloudCard').style.display='';
-    $('#cloudState').textContent=C.loc_state==='moving'?t('cl_moving'):t('cl_parked');
+  const CLD=L.cloud;
+  if(CLD){$('#cloudCard').style.display='';
+    $('#cloudState').textContent=CLD.loc_state==='moving'?t('cl_moving'):t('cl_parked');
     const cs=$('#cloudSpeed');
-    if(C.speed!=null){cs.style.display='';cs.style.background='rgba(3,169,244,.16)';cs.style.color='#03a9f4';cs.textContent=C.speed+' km/h';}else cs.style.display='none';
-    $('#cloudCharge').textContent=C.module_charge!=null?C.module_charge+'%':'—';
-    if(C.latitude!=null){const ll=C.latitude.toFixed(5)+', '+C.longitude.toFixed(5);
-      $('#cloudLoc').innerHTML=`<a href="https://www.google.com/maps?q=${C.latitude},${C.longitude}" target="_blank" rel="noopener">${ll}</a>`;}
+    if(CLD.speed!=null){cs.style.display='';cs.style.background='rgba(3,169,244,.16)';cs.style.color='#03a9f4';cs.textContent=CLD.speed+' km/h';}else cs.style.display='none';
+    $('#cloudCharge').textContent=CLD.module_charge!=null?CLD.module_charge+'%':'—';
+    if(CLD.latitude!=null){const ll=CLD.latitude.toFixed(5)+', '+CLD.longitude.toFixed(5);
+      $('#cloudLoc').innerHTML=`<a href="https://www.google.com/maps?q=${CLD.latitude},${CLD.longitude}" target="_blank" rel="noopener">${ll}</a>`;}
     else $('#cloudLoc').textContent='—';
-    $('#cloudUpd').textContent=C.ts?ago(C.ts):'';}
+    $('#cloudUpd').textContent=CLD.ts?ago(CLD.ts):'';}
   else $('#cloudCard').style.display='none';
   // security
   const A=L.alarm; const nm={disarmed:t('s_disarmed'),armed_home:t('s_home'),armed_away:t('s_away'),triggered:t('s_trig')}[A]||'—';
