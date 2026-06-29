@@ -368,9 +368,11 @@ def publish_main_battery(present: bool) -> None:
         _mqtt.publish(MAIN_BATTERY_TOPIC, "ON" if present else "OFF", retain=True)
 
 
-def _record_charge(pct) -> None:
-    """Feed a module-charge sample and re-infer whether the main battery is in.
-    Rising or near-full = in (charging); a sustained drop over the window = out."""
+def _record_charge(pct, ts: "float | None" = None) -> None:
+    """Feed a module-charge sample (optionally historical, for cloud seeding) and
+    re-infer whether the main battery is in. Rising or near-full = in (charging);
+    a sustained drop over the window = out. Trend is measured against the LATEST
+    sample's time, so seeded historical samples work the same as live ones."""
     global _main_battery_state
     try:
         pct = int(pct)
@@ -378,14 +380,15 @@ def _record_charge(pct) -> None:
         return
     if not (0 <= pct <= 100):
         return
-    now = time.time()
-    _charge_hist.append((now, pct))
+    _charge_hist.append((ts if ts is not None else time.time(), pct))
+    _charge_hist.sort(key=lambda x: x[0])       # keep chronological (seeding may add older)
+    now = _charge_hist[-1][0]                    # reference = newest sample time
     cutoff = now - 6 * 3600
     while _charge_hist and _charge_hist[0][0] < cutoff:
         _charge_hist.pop(0)
     ref = None                                  # newest sample older than the window
-    for ts, p in _charge_hist:
-        if now - ts >= MAIN_BATT_WINDOW:
+    for t, p in _charge_hist:
+        if now - t >= MAIN_BATT_WINDOW:
             ref = p
     state = _main_battery_state
     if ref is not None:
@@ -1695,7 +1698,8 @@ async def proxy_presence_loop() -> None:
 
         async def on_connect() -> None:
             try:
-                await cli.subscribe_bluetooth_le_advertisements(on_adv)
+                # Returns an unsubscribe callable (not awaitable).
+                cli.subscribe_bluetooth_le_advertisements(on_adv)
                 log.info("BLE proxy connected: %s:%s", _PROXY_HOST, _PROXY_PORT)
             except Exception as err:  # noqa: BLE001
                 log.warning("BLE proxy subscribe failed: %s", err)
@@ -1896,6 +1900,43 @@ async def pon_cloud_loop() -> None:
         return js if s == 200 else None
 
     log.info("PON cloud poll starting (every %ss)", int(PON_POLL))
+    # Seed the main-battery charge trend from recent cloud history so the inference
+    # works right after a restart (the 45-min window otherwise starts empty).
+    try:
+        if not st["bike"]:
+            info = await api("/v1/bikes/info")
+            if isinstance(info, list) and info:
+                st["bike"] = info[0].get("bikeId")
+        if st["bike"]:
+            import datetime as _dt
+
+            def _iso(s):
+                try:
+                    return _dt.datetime.fromisoformat(str(s).replace("Z", "+00:00")).timestamp()
+                except Exception:  # noqa: BLE001
+                    return None
+            frm = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 2 * 3600))
+            to = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            hist = await api(f"/v1/bikes/{st['bike']}/IOT/history"
+                             f"?from={frm}&to={to}&offset=0&limit=5000")
+            items = hist.get("items") if isinstance(hist, dict) else None
+            samples = []
+            if isinstance(items, list):
+                for it in items:
+                    if not isinstance(it, dict):
+                        continue
+                    for sub in (it.get("items") or []):
+                        if isinstance(sub, dict) and sub.get("chargePercentage") is not None:
+                            t = _iso(sub.get("timestamp") or it.get("timestamp"))
+                            if t:
+                                samples.append((t, sub["chargePercentage"]))
+            for t, pct in sorted(samples):
+                _record_charge(pct, ts=t)
+            if samples:
+                log.info("seeded charge trend from %d cloud samples (main battery=%s)",
+                         len(samples), _main_battery_state)
+    except Exception as err:  # noqa: BLE001
+        log.debug("charge seed failed: %s", err)
     while True:
         try:
             if not st["bike"]:
