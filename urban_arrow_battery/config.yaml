@@ -1,5 +1,5 @@
 name: Bosch Kiox eBike
-version: "2.33.0"
+version: "2.34.0"
 slug: urban_arrow_battery
 description: >-
   Reads a Bosch Smart System eBike (Kiox display) over Bluetooth — battery, range
@@ -19,6 +19,8 @@ panel_icon: mdi:bicycle-electric
 panel_title: Bosch Kiox eBike
 # Access the host BlueZ stack over D-Bus (needed for BLE bonding + reading).
 host_dbus: true
+# Read HA entity states (optional external bike-mounted motion/contact sensor).
+homeassistant_api: true
 # Auto-receive the MQTT broker connection details from Home Assistant.
 services:
   - mqtt:want

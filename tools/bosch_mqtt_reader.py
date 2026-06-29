@@ -34,8 +34,10 @@ import paho.mqtt.client as mqtt
 from bleak import BleakClient, BleakScanner
 
 try:
+    import aiohttp  # HA core API client (feature F) + UI
     from aiohttp import web  # setup UI (Ingress)
 except Exception:  # noqa: BLE001 - optional; reader still works without the UI
+    aiohttp = None  # type: ignore[assignment]
     web = None  # type: ignore[assignment]
 
 ADDRESS = os.getenv("BIKE_ADDRESS", "").strip()
@@ -123,7 +125,7 @@ def _save_cfg() -> None:
         with open(DATA_FILE, "w") as fh:
             json.dump({"bike": _bike_addr, "tracker": _tracker_mac,
                        "tracker_off": _tracker_off, "alarm_off": _alarm_off,
-                       "bike_off": _bike_off,
+                       "bike_off": _bike_off, "ext_motion": _ext_motion,
                        "bike_model": _last.get("bike_model"),
                        "bike_brand": _last.get("bike_brand"),
                        "sku": _last.get("sku"),
@@ -221,6 +223,13 @@ _tracker_mac: "str | None" = (_cfg0.get("tracker") or COMODULE_ADDRESS or "").st
 _tracker_off: bool = bool(_cfg0.get("tracker_off", False))
 # Bike removed/forgotten: pause all bike reading until one is (re-)added via the UI.
 _bike_off: bool = bool(_cfg0.get("bike_off", False))
+# Optional EXTERNAL motion source (feature F): an HA binary_sensor the user mounts
+# on the bike (contact/vibration/motion). When it turns on we treat it like tracker
+# motion — fully independent of BLE/the COMODULE. Entity id, "" = none.
+_ext_motion: "str | None" = (_cfg0.get("ext_motion") or "").strip() or None
+# Home Assistant core API via the Supervisor proxy (needs homeassistant_api: true).
+SUPERVISOR_TOKEN: str = os.getenv("SUPERVISOR_TOKEN", "")
+HA_API = "http://supervisor/core/api"
 # Alarm (HomeKit Security System) is optional on top of the motion sensor.
 _alarm_off: bool = bool(_cfg0.get("alarm_off", False))
 # Battery-friendly: only hold the tracker connection while the alarm is armed
@@ -1579,6 +1588,92 @@ async def hub_probe_loop() -> None:
             await asyncio.sleep(2)
 
 
+async def _ha_get(path: str):
+    """GET the Home Assistant core API via the Supervisor proxy. None on failure."""
+    if not SUPERVISOR_TOKEN or aiohttp is None:
+        return None
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(HA_API + path,
+                             headers={"Authorization": "Bearer " + SUPERVISOR_TOKEN},
+                             timeout=aiohttp.ClientTimeout(total=15)) as r:
+                if r.status == 200:
+                    return await r.json()
+                log.debug("HA API %s -> %s", path, r.status)
+    except Exception as err:  # noqa: BLE001
+        log.debug("HA API %s failed: %s", path, err)
+    return None
+
+
+# binary_sensor classes that make sense as a bike-mounted theft sensor.
+_EXT_CLASSES = ("motion", "moving", "vibration", "door", "window", "opening",
+                "occupancy", "presence", "tamper", "sound")
+
+
+async def list_ha_motion_entities() -> list:
+    """Return candidate HA binary_sensors the user could mount on the bike."""
+    states = await _ha_get("/states")
+    out = []
+    if not isinstance(states, list):
+        return out
+    for st in states:
+        eid = st.get("entity_id", "")
+        if not eid.startswith("binary_sensor."):
+            continue
+        attrs = st.get("attributes", {}) or {}
+        dc = attrs.get("device_class")
+        # Offer matching device-classes first, but allow any binary_sensor too.
+        out.append({"entity_id": eid,
+                    "name": attrs.get("friendly_name", eid),
+                    "device_class": dc,
+                    "state": st.get("state"),
+                    "match": dc in _EXT_CLASSES})
+    out.sort(key=lambda e: (not e["match"], e["name"].lower()))
+    return out
+
+
+async def ext_motion_loop() -> None:
+    """Feature F: poll the chosen external HA binary_sensor and treat it as motion.
+    Fully independent of BLE — for users who mount their own contact/vibration/motion
+    sensor on the bike. On 'on' it publishes motion + trips the alarm when armed;
+    clears after MOTION_OFF_DELAY of 'off'. No-op until an entity is selected."""
+    prev = False
+    off_since = 0.0
+    while True:
+        try:
+            ent = _ext_motion
+            if not ent or not SUPERVISOR_TOKEN:
+                await asyncio.sleep(6)
+                continue
+            st = await _ha_get("/states/" + ent)
+            on = isinstance(st, dict) and st.get("state") == "on"
+            now = time.time()
+            if on:
+                off_since = 0.0
+                if not prev:
+                    prev = True
+                    publish_motion(True)
+                    _last["motion"] = True
+                    log.info("ext motion ON (%s)", ent)
+                    if (not _alarm_off and _alarm["state"] in ARMED_STATES):
+                        _alarm["state"] = "triggered"
+                        publish_alarm("triggered")
+                        log.info("alarm TRIGGERED by external sensor %s", ent)
+            else:
+                if prev:
+                    if not off_since:
+                        off_since = now
+                    elif now - off_since >= MOTION_OFF_DELAY:
+                        prev = False
+                        off_since = 0.0
+                        publish_motion(False)
+                        _last["motion"] = False
+                        log.info("ext motion OFF (%s)", ent)
+        except Exception as err:  # noqa: BLE001
+            log.warning("ext motion loop: %s: %s", type(err).__name__, err)
+        await asyncio.sleep(3)
+
+
 async def start_motion(_mqtt_client: mqtt.Client) -> None:
     """Launch the self-resolving motion watcher (no-op work if disabled)."""
     publish_motion(False)
@@ -1586,6 +1681,7 @@ async def start_motion(_mqtt_client: mqtt.Client) -> None:
     publish_present(False)
     asyncio.create_task(presence_loop())
     asyncio.create_task(proxy_presence_loop())
+    asyncio.create_task(ext_motion_loop())
     asyncio.create_task(hub_probe_loop())
 
 
@@ -1804,6 +1900,12 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
     <p class=muted data-i18n=su_alarm_p>Afwezig = hard (push + lampen), Thuis = stil (alleen melding). Uit = alleen de bewegingssensor.</p>
     <button id=alarmBtn onclick="toggleAlarm()">…</button> <span id=alarmState class=muted></span>
   </div>
+  <div class=card id=extCard>
+    <h2 data-i18n=ext_h>Externe bewegingssensor (op de fiets)</h2>
+    <p class=muted data-i18n=ext_p>Kies een eigen Home Assistant-sensor (bijv. contact-, trillings- of bewegingssensor) die je op de fiets monteert. Gaat die aan, dan telt dat als beweging en gaat — als het alarm scherp staat — het alarm af. Werkt los van Bluetooth.</p>
+    <select id=extSel style="width:100%;max-width:520px;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink)"></select>
+    <div style="margin-top:10px"><button id=extSaveBtn onclick="saveExtMotion()" data-i18n=ext_save>Opslaan</button> <span id=extMsg class=muted></span></div>
+  </div>
 </section>
 </div>
 <script>
@@ -1811,15 +1913,26 @@ const $=s=>document.querySelector(s);
 const api=async(p,o)=>(await fetch(p,o)).json();
 const post=(p,b)=>api(p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b||{})});
 const LANG=(navigator.language||'en').toLowerCase().startsWith('nl')?'nl':'en';
-const T={nl:{tab_dash:'Dashboard',tab_more:'Meer info',tab_set:'Instellingen',components:'Componenten',about:'Over deze add-on',about_p:'Leest je Bosch Smart System eBike (Kiox) via Bluetooth uit en publiceert batterij, bereik, modus, km-stand, beurt, beweging/alarm en tracker naar Home Assistant.',about_repo:'Broncode op GitHub',c_drive:'Aandrijving',c_batt:'Accu',c_disp:'Display',c_hub:'Hub',mode:'Rijmodus',maint:'Onderhoud',maint_sub:'tot de volgende servicebeurt',security:'Beveiliging',ranges:'Geschat bereik per stand',mileage:'Kilometerstand',tech:'Technische info',tech_kiox:'Kiox (Bosch-hub)',tech_gps:'GPS-module',t_model:'Model',t_frame:'Framenummer',devmode:'🛠️ Ontwikkelmodus: COMODULE-probe staat AAN — logt 155e-statusframes en houdt de tracker verbonden (de module-accu loopt sneller leeg). Alleen voor ontwikkeling; zet COMODULE-probe (dev) uit in de configuratie als je klaar bent.',gps:'GPS-module',gps_conn:'verbonden',in_range:'in bereik',out_range:'buiten bereik',ob_title:'Nog geen fiets',ob_body:'Ga naar Instellingen, scan en koppel je fiets om te beginnen.',ob_btn:'Naar Instellingen',remove_bike:'Verwijder fiets',remove_confirm_btn:'Bevestig verwijderen',remove_confirm:'⚠️ Weet je het zeker? Klik nogmaals om te wissen.',removed_ok:'Verwijderd ✓',lk_on:'🔒 Vergrendeld',lk_off:'🔓 Ontgrendeld',refresh_module:'Module-accu verversen',refreshing:'verversen…',t_pname:'Productnaam',t_color:'Kleur',t_part:'Onderdeelnummer',t_sku:'Artikelcode',t_pcode:'Productcode',t_hubfw:'Firmware',t_modfw:'Firmware',t_addr:'Bluetooth-adres',t_mac:'MAC-adres',t_mfr:'Fabrikant',t_hw:'Hardware',t_batt:'Module-accu',legal:'Onofficiële, door de community gemaakte integratie. Niet gelieerd aan, goedgekeurd of ondersteund door Bosch eBike Systems of Urban Arrow. Gebruik volledig op eigen risico, zonder enige garantie. Alle merknamen zijn eigendom van hun respectievelijke eigenaren.',su_bike_h:'1. Fiets',su_bike_p:"Zet het display van de fiets aan en scan.",scan_bikes:'Scan fietsen',select_bike:'Selecteer deze fiets',su_pair_p:'Zet de fiets in pairing mode (display → nieuw apparaat koppelen), klik dan:',pair_btn:'Koppel (pair)',su_tracker_h:'2. GPS-tracker (anti-diefstal, optioneel)',su_tracker_p:"De tracker is altijd aan. Scan en kies 'm, of sla over.",scan_trackers:'Scan trackers',skip:'Overslaan / uit',select_tracker:'Selecteer deze tracker',su_alarm_h:'3. Alarm (optioneel — vereist de tracker)',su_alarm_p:'Afwezig = hard (push + lampen), Thuis = stil (alleen melding). Uit = alleen de bewegingssensor.',conn_on:'Verbonden',conn_off:'Niet verbonden',no_reading:'nog geen meting',up_now:'zojuist bijgewerkt',up_min:'bijgewerkt {n} min geleden',up_hour:'bijgewerkt {n} uur geleden',up_day:'bijgewerkt {n} d geleden',motion_y:'beweging',motion_n:'rustig',alarm_off:'Alarm uit',s_disarmed:'Uit',s_home:'Stil',s_away:'Vol alarm',s_trig:'⚠️ GEACTIVEERD',a_off:'Uit',a_home:'Stil',a_away:'Vol alarm',alarm_off_hint:'Alarm staat uit (zie Instellingen)',alarm_enable:'Alarm inschakelen',alarm_disable:'Alarm uitschakelen',now_off:'momenteel uit',now_on:'momenteel aan',scanning:'scannen… (±8s)',nothing:'niets gevonden — staat het apparaat aan/in bereik?',pairing:'koppelen…',paired_ok:'Gekoppeld ✓',paired_fail:'Mislukt — staat de fiets in pairing mode?',request_photo:'Andere fiets? Vraag je kleur/model aan',sec_warn:'⚠️ Let op: scherp zetten houdt de tracker verbonden — daardoor loopt de module-accu sneller leeg. Bij ≤20% schakelt het alarm automatisch uit.'},
-en:{tab_dash:'Dashboard',tab_more:'More info',tab_set:'Settings',components:'Components',about:'About this add-on',about_p:'Reads your Bosch Smart System eBike (Kiox) over Bluetooth and publishes battery, range, mode, odometer, service, motion/alarm and tracker to Home Assistant.',about_repo:'Source code on GitHub',c_drive:'Drive unit',c_batt:'Battery',c_disp:'Display',c_hub:'Hub',mode:'Ride mode',maint:'Maintenance',maint_sub:'until the next service',security:'Security',ranges:'Estimated range per mode',mileage:'Odometer',tech:'Technical info',tech_kiox:'Kiox (Bosch hub)',tech_gps:'GPS module',t_model:'Model',t_frame:'Frame number',devmode:'🛠️ Developer mode: the COMODULE probe is ON — it logs 155e status frames and keeps the tracker connected (drains the module battery faster). For development only; turn off COMODULE probe (dev) in the configuration when done.',gps:'GPS module',gps_conn:'connected',in_range:'in range',out_range:'out of range',ob_title:'No bike yet',ob_body:'Go to Settings, scan and pair your bike to get started.',ob_btn:'Go to Settings',remove_bike:'Remove bike',remove_confirm_btn:'Confirm remove',remove_confirm:'⚠️ Are you sure? Click again to wipe.',removed_ok:'Removed ✓',lk_on:'🔒 Locked',lk_off:'🔓 Unlocked',refresh_module:'Refresh module battery',refreshing:'refreshing…',t_pname:'Product name',t_color:'Colour',t_part:'Part number',t_sku:'Article code',t_pcode:'Product code',t_hubfw:'Firmware',t_modfw:'Firmware',t_addr:'Bluetooth address',t_mac:'MAC address',t_mfr:'Manufacturer',t_hw:'Hardware',t_batt:'Module battery',legal:'Unofficial, community-made integration. Not affiliated with, endorsed by, or supported by Bosch eBike Systems or Urban Arrow. Use entirely at your own risk, without any warranty. All trademarks are the property of their respective owners.',su_bike_h:'1. Bike',su_bike_p:"Turn on the bike's display and scan.",scan_bikes:'Scan bikes',select_bike:'Select this bike',su_pair_p:'Put the bike in pairing mode (display → connect a new device), then:',pair_btn:'Pair',su_tracker_h:'2. GPS tracker (anti-theft, optional)',su_tracker_p:'The tracker is always on. Scan and pick it, or skip.',scan_trackers:'Scan trackers',skip:'Skip / off',select_tracker:'Select this tracker',su_alarm_h:'3. Alarm (optional — needs the tracker)',su_alarm_p:'Away = loud (push + lights), Home = silent (notification only). Off = motion sensor only.',conn_on:'Connected',conn_off:'Not connected',no_reading:'no reading yet',up_now:'updated just now',up_min:'updated {n} min ago',up_hour:'updated {n} h ago',up_day:'updated {n} d ago',motion_y:'motion',motion_n:'still',alarm_off:'Alarm off',s_disarmed:'Off',s_home:'Silent',s_away:'Full alarm',s_trig:'⚠️ TRIGGERED',a_off:'Off',a_home:'Silent',a_away:'Full alarm',alarm_off_hint:'Alarm is off (see Settings)',alarm_enable:'Enable alarm',alarm_disable:'Disable alarm',now_off:'currently off',now_on:'currently on',scanning:'scanning… (±8s)',nothing:'nothing found — is the device on / in range?',pairing:'pairing…',paired_ok:'Paired ✓',paired_fail:'Failed — is the bike in pairing mode?',request_photo:'Different bike? Request your colour & model',sec_warn:'⚠️ Note: arming keeps the tracker connected — this drains the module battery faster. At ≤20% the alarm switches off automatically.'}};
+const T={nl:{tab_dash:'Dashboard',tab_more:'Meer info',tab_set:'Instellingen',components:'Componenten',about:'Over deze add-on',about_p:'Leest je Bosch Smart System eBike (Kiox) via Bluetooth uit en publiceert batterij, bereik, modus, km-stand, beurt, beweging/alarm en tracker naar Home Assistant.',about_repo:'Broncode op GitHub',c_drive:'Aandrijving',c_batt:'Accu',c_disp:'Display',c_hub:'Hub',mode:'Rijmodus',maint:'Onderhoud',maint_sub:'tot de volgende servicebeurt',security:'Beveiliging',ranges:'Geschat bereik per stand',mileage:'Kilometerstand',tech:'Technische info',tech_kiox:'Kiox (Bosch-hub)',tech_gps:'GPS-module',t_model:'Model',t_frame:'Framenummer',devmode:'🛠️ Ontwikkelmodus: COMODULE-probe staat AAN — logt 155e-statusframes en houdt de tracker verbonden (de module-accu loopt sneller leeg). Alleen voor ontwikkeling; zet COMODULE-probe (dev) uit in de configuratie als je klaar bent.',gps:'GPS-module',gps_conn:'verbonden',in_range:'in bereik',out_range:'buiten bereik',ob_title:'Nog geen fiets',ob_body:'Ga naar Instellingen, scan en koppel je fiets om te beginnen.',ob_btn:'Naar Instellingen',remove_bike:'Verwijder fiets',remove_confirm_btn:'Bevestig verwijderen',remove_confirm:'⚠️ Weet je het zeker? Klik nogmaals om te wissen.',removed_ok:'Verwijderd ✓',lk_on:'🔒 Vergrendeld',lk_off:'🔓 Ontgrendeld',refresh_module:'Module-accu verversen',refreshing:'verversen…',t_pname:'Productnaam',t_color:'Kleur',t_part:'Onderdeelnummer',t_sku:'Artikelcode',t_pcode:'Productcode',t_hubfw:'Firmware',t_modfw:'Firmware',t_addr:'Bluetooth-adres',t_mac:'MAC-adres',t_mfr:'Fabrikant',t_hw:'Hardware',t_batt:'Module-accu',legal:'Onofficiële, door de community gemaakte integratie. Niet gelieerd aan, goedgekeurd of ondersteund door Bosch eBike Systems of Urban Arrow. Gebruik volledig op eigen risico, zonder enige garantie. Alle merknamen zijn eigendom van hun respectievelijke eigenaren.',su_bike_h:'1. Fiets',su_bike_p:"Zet het display van de fiets aan en scan.",scan_bikes:'Scan fietsen',select_bike:'Selecteer deze fiets',su_pair_p:'Zet de fiets in pairing mode (display → nieuw apparaat koppelen), klik dan:',pair_btn:'Koppel (pair)',su_tracker_h:'2. GPS-tracker (anti-diefstal, optioneel)',su_tracker_p:"De tracker is altijd aan. Scan en kies 'm, of sla over.",scan_trackers:'Scan trackers',skip:'Overslaan / uit',select_tracker:'Selecteer deze tracker',su_alarm_h:'3. Alarm (optioneel — vereist de tracker)',su_alarm_p:'Afwezig = hard (push + lampen), Thuis = stil (alleen melding). Uit = alleen de bewegingssensor.',conn_on:'Verbonden',conn_off:'Niet verbonden',no_reading:'nog geen meting',up_now:'zojuist bijgewerkt',up_min:'bijgewerkt {n} min geleden',up_hour:'bijgewerkt {n} uur geleden',up_day:'bijgewerkt {n} d geleden',motion_y:'beweging',motion_n:'rustig',alarm_off:'Alarm uit',s_disarmed:'Uit',s_home:'Stil',s_away:'Vol alarm',s_trig:'⚠️ GEACTIVEERD',a_off:'Uit',a_home:'Stil',a_away:'Vol alarm',alarm_off_hint:'Alarm staat uit (zie Instellingen)',alarm_enable:'Alarm inschakelen',alarm_disable:'Alarm uitschakelen',now_off:'momenteel uit',now_on:'momenteel aan',scanning:'scannen… (±8s)',nothing:'niets gevonden — staat het apparaat aan/in bereik?',pairing:'koppelen…',paired_ok:'Gekoppeld ✓',paired_fail:'Mislukt — staat de fiets in pairing mode?',request_photo:'Andere fiets? Vraag je kleur/model aan',sec_warn:'⚠️ Let op: scherp zetten houdt de tracker verbonden — daardoor loopt de module-accu sneller leeg. Bij ≤20% schakelt het alarm automatisch uit.',ext_h:'Externe bewegingssensor (op de fiets)',ext_p:'Kies een eigen Home Assistant-sensor (contact-, trillings- of bewegingssensor) die je op de fiets monteert. Gaat die aan, dan telt dat als beweging en gaat — als het alarm scherp staat — het alarm af. Werkt los van Bluetooth.',ext_save:'Opslaan',ext_none:'— Geen —',saved_ok:'Opgeslagen ✓'},
+en:{tab_dash:'Dashboard',tab_more:'More info',tab_set:'Settings',components:'Components',about:'About this add-on',about_p:'Reads your Bosch Smart System eBike (Kiox) over Bluetooth and publishes battery, range, mode, odometer, service, motion/alarm and tracker to Home Assistant.',about_repo:'Source code on GitHub',c_drive:'Drive unit',c_batt:'Battery',c_disp:'Display',c_hub:'Hub',mode:'Ride mode',maint:'Maintenance',maint_sub:'until the next service',security:'Security',ranges:'Estimated range per mode',mileage:'Odometer',tech:'Technical info',tech_kiox:'Kiox (Bosch hub)',tech_gps:'GPS module',t_model:'Model',t_frame:'Frame number',devmode:'🛠️ Developer mode: the COMODULE probe is ON — it logs 155e status frames and keeps the tracker connected (drains the module battery faster). For development only; turn off COMODULE probe (dev) in the configuration when done.',gps:'GPS module',gps_conn:'connected',in_range:'in range',out_range:'out of range',ob_title:'No bike yet',ob_body:'Go to Settings, scan and pair your bike to get started.',ob_btn:'Go to Settings',remove_bike:'Remove bike',remove_confirm_btn:'Confirm remove',remove_confirm:'⚠️ Are you sure? Click again to wipe.',removed_ok:'Removed ✓',lk_on:'🔒 Locked',lk_off:'🔓 Unlocked',refresh_module:'Refresh module battery',refreshing:'refreshing…',t_pname:'Product name',t_color:'Colour',t_part:'Part number',t_sku:'Article code',t_pcode:'Product code',t_hubfw:'Firmware',t_modfw:'Firmware',t_addr:'Bluetooth address',t_mac:'MAC address',t_mfr:'Manufacturer',t_hw:'Hardware',t_batt:'Module battery',legal:'Unofficial, community-made integration. Not affiliated with, endorsed by, or supported by Bosch eBike Systems or Urban Arrow. Use entirely at your own risk, without any warranty. All trademarks are the property of their respective owners.',su_bike_h:'1. Bike',su_bike_p:"Turn on the bike's display and scan.",scan_bikes:'Scan bikes',select_bike:'Select this bike',su_pair_p:'Put the bike in pairing mode (display → connect a new device), then:',pair_btn:'Pair',su_tracker_h:'2. GPS tracker (anti-theft, optional)',su_tracker_p:'The tracker is always on. Scan and pick it, or skip.',scan_trackers:'Scan trackers',skip:'Skip / off',select_tracker:'Select this tracker',su_alarm_h:'3. Alarm (optional — needs the tracker)',su_alarm_p:'Away = loud (push + lights), Home = silent (notification only). Off = motion sensor only.',conn_on:'Connected',conn_off:'Not connected',no_reading:'no reading yet',up_now:'updated just now',up_min:'updated {n} min ago',up_hour:'updated {n} h ago',up_day:'updated {n} d ago',motion_y:'motion',motion_n:'still',alarm_off:'Alarm off',s_disarmed:'Off',s_home:'Silent',s_away:'Full alarm',s_trig:'⚠️ TRIGGERED',a_off:'Off',a_home:'Silent',a_away:'Full alarm',alarm_off_hint:'Alarm is off (see Settings)',alarm_enable:'Enable alarm',alarm_disable:'Disable alarm',now_off:'currently off',now_on:'currently on',scanning:'scanning… (±8s)',nothing:'nothing found — is the device on / in range?',pairing:'pairing…',paired_ok:'Paired ✓',paired_fail:'Failed — is the bike in pairing mode?',request_photo:'Different bike? Request your colour & model',sec_warn:'⚠️ Note: arming keeps the tracker connected — this drains the module battery faster. At ≤20% the alarm switches off automatically.',ext_h:'External motion sensor (on the bike)',ext_p:'Pick your own Home Assistant sensor (contact, vibration or motion) that you mount on the bike. When it turns on it counts as motion and — if the alarm is armed — triggers it. Works independently of Bluetooth.',ext_save:'Save',ext_none:'— None —',saved_ok:'Saved ✓'}};
 const t=(k,n)=>((T[LANG]||T.en)[k]||k).replace('{n}',n);
 function applyI18n(){document.querySelectorAll('[data-i18n]').forEach(e=>{e.textContent=t(e.dataset.i18n)});}
 const MC={Turbo:'#e2241a',Auto:'#7b3ff2','Tour+':'#1aa3e0',Tour:'#1aa3e0',Eco:'#5fb336',Off:'#8a8a8a'};
 const bcol=p=>p>40?'#37a24a':p>15?'#f59e0b':'#e53935';
 let pick={bike:null,tracker:null};
 let _tab='dash';
-function tab(t){_tab=t;rt();}
+function tab(t){_tab=t;rt();if(t=='set')loadExt();}
+async function loadExt(){const sel=$('#extSel');if(!sel)return;
+  let d;try{d=await api('api/ha_entities');}catch(e){return;}
+  if(!d.available){$('#extCard').style.display='none';return;}
+  $('#extCard').style.display='';
+  const cur=d.selected||'';
+  let html=`<option value="">${t('ext_none')}</option>`;
+  (d.entities||[]).forEach(e=>{const star=e.match?'★ ':'';const dc=e.device_class?` (${e.device_class})`:'';
+    html+=`<option value="${e.entity_id}"${e.entity_id==cur?' selected':''}>${star}${e.name}${dc}</option>`;});
+  sel.innerHTML=html;}
+async function saveExtMotion(){const v=$('#extSel').value;await post('api/set_ext_motion',{entity_id:v});
+  $('#extMsg').textContent=' '+t('saved_ok');setTimeout(()=>{$('#extMsg').textContent='';},2500);}
 function rt(){const added=window._added!==false;
   $('#onboard').classList.toggle('hidden', added || _tab=='set');
   $('#dash').classList.toggle('hidden', _tab!='dash'||!added);
@@ -2032,6 +2145,25 @@ async def _ui_select_tracker(request):
     return web.json_response({"ok": True, "tracker": _tracker_mac, "off": _tracker_off})
 
 
+async def _ui_ha_entities(_request):
+    """List candidate HA binary_sensors for the external-motion picker (feature F)."""
+    return web.json_response({"entities": await list_ha_motion_entities(),
+                              "selected": _ext_motion,
+                              "available": bool(SUPERVISOR_TOKEN)})
+
+
+async def _ui_set_ext_motion(request):
+    global _ext_motion
+    data = await request.json()
+    _ext_motion = (data.get("entity_id") or "").strip() or None
+    if not _ext_motion:                 # cleared — drop any lingering motion state
+        publish_motion(False)
+        _last["motion"] = False
+    _save_cfg()
+    log.info("UI: external motion sensor set to %s", _ext_motion)
+    return web.json_response({"ok": True, "ext_motion": _ext_motion})
+
+
 async def start_web() -> None:
     if web is None:
         log.warning("setup UI unavailable (aiohttp missing)")
@@ -2049,6 +2181,8 @@ async def start_web() -> None:
         web.post("/api/set_alarm", _ui_set_alarm),
         web.post("/api/alarm", _ui_alarm),
         web.post("/api/refresh_tracker", _ui_refresh_tracker),
+        web.get("/api/ha_entities", _ui_ha_entities),
+        web.post("/api/set_ext_motion", _ui_set_ext_motion),
     ])
     runner = web.AppRunner(app)
     await runner.setup()
