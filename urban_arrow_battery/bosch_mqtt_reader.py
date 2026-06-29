@@ -81,7 +81,7 @@ MOTION_OFF_DELAY = float(os.getenv("MOTION_OFF_DELAY", "12"))
 # disarmed. PRESENCE_GRACE = seconds the advert may go unheard before the bike is
 # declared "out of range" (generous, so brief shared-adapter scan misses don't
 # false-alarm). Re-checked every PRESENCE_GAP seconds with a short passive scan.
-PRESENCE_GRACE = float(os.getenv("PRESENCE_GRACE", "120"))
+PRESENCE_GRACE = float(os.getenv("PRESENCE_GRACE", "600"))
 PRESENCE_GAP = float(os.getenv("PRESENCE_GAP", "20"))
 
 DISC_PREFIX = "homeassistant"
@@ -1715,15 +1715,25 @@ async def proxy_presence_loop() -> None:
         log.warning("BLE proxy disabled (libs unavailable): %s", err)
         return
 
+    dbg = {"t": 0.0}
+
     def on_adv(adv) -> None:
         if _tracker_off:
             return
         try:
-            if _proxy_adv_is_tracker(adv):
-                global _tracker_seen_ts
-                _tracker_seen_ts = time.time()
-        except Exception:  # noqa: BLE001
-            pass
+            match = _proxy_adv_is_tracker(adv)
+            if match:
+                globals()["_tracker_seen_ts"] = time.time()
+            now = time.monotonic()
+            if now - dbg["t"] > 60:            # diagnostic: see the proxy advert format
+                md = getattr(adv, "manufacturer_data", None)
+                nm = getattr(adv, "name", "") or ""
+                if match or "urban" in nm.lower() or (isinstance(md, dict)
+                        and (0x020F in md or 527 in md)):
+                    dbg["t"] = now
+                    log.info("proxy adv: name=%r match=%s mfr=%r", nm, match, md)
+        except Exception as err:  # noqa: BLE001
+            log.debug("proxy on_adv: %s", err)
 
     try:
         azc = AsyncZeroconf()
