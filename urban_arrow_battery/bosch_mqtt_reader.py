@@ -2397,15 +2397,19 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
     if(CLD.speed!=null){cs.style.display='';cs.style.background='rgba(3,169,244,.16)';cs.style.color='#03a9f4';cs.textContent=CLD.speed+' km/h';}else cs.style.display='none';
     $('#cloudHome').textContent=CLD.home===true?('✓ '+t('at_home')):(CLD.distance_m!=null?fmtDist(CLD.distance_m):'—');
     const mp=$('#cloudMap');
-    if(window.L && CLD.latitude!=null){const la=CLD.latitude,lo=CLD.longitude;mp.style.display='';
-      if(!window._lmap){window._lmap=L.map(mp,{zoomControl:true}).setView([la,lo],16);
-        L.tileLayer('tile/{z}/{x}/{y}',{maxZoom:20,attribution:'© OpenStreetMap, © CARTO'}).addTo(window._lmap);
-        window._lmark=L.circleMarker([la,lo],{radius:9,color:'#fff',weight:3,fillColor:'#03a9f4',fillOpacity:1}).addTo(window._lmap);
-        setTimeout(()=>window._lmap.invalidateSize(),150);}
-      else{window._lmap.setView([la,lo]);window._lmark.setLatLng([la,lo]);}
-      window._lmap.invalidateSize();}
-    else mp.style.display='none';
-    $('#cloudUpd').textContent=CLD.ts?ago(CLD.ts):'';}
+    try{
+      if(!window.L){mp.style.display='none';$('#cloudUpd').textContent='map: leaflet not loaded';}
+      else if(CLD.latitude!=null){const la=CLD.latitude,lo=CLD.longitude;mp.style.display='';
+        if(!window._lmap){window._lmap=L.map(mp,{zoomControl:true,attributionControl:true});
+          L.tileLayer('tile/{z}/{x}/{y}',{maxZoom:20,attribution:'© OpenStreetMap, © CARTO'}).addTo(window._lmap);
+          window._lmark=L.circleMarker([la,lo],{radius:9,color:'#fff',weight:3,fillColor:'#03a9f4',fillOpacity:1}).addTo(window._lmap);
+          window._lmap.setView([la,lo],16);
+          setTimeout(()=>{try{window._lmap.invalidateSize();}catch(e){}},300);}
+        else{window._lmap.setView([la,lo]);window._lmark.setLatLng([la,lo]);}
+        setTimeout(()=>{try{window._lmap.invalidateSize();}catch(e){}},50);
+        $('#cloudUpd').textContent=CLD.ts?ago(CLD.ts):'';}
+      else{mp.style.display='none';$('#cloudUpd').textContent=CLD.ts?ago(CLD.ts):'';}
+    }catch(e){mp.style.display='none';$('#cloudUpd').textContent='map err: '+(e&&e.message||e);}}
   else $('#cloudSub').style.display='none';
   // security
   const A=L.alarm; const nm={disarmed:t('s_disarmed'),armed_home:t('s_home'),armed_away:t('s_away'),triggered:t('s_trig')}[A]||'—';
