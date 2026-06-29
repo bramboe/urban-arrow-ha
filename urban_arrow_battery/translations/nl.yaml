@@ -37,6 +37,22 @@ configuration:
       sensor "in bereik" werkt ook als het alarm uit staat. Het detecteert dat de
       fiets de buurt VERLAAT, niet schudden ter plekke (dat vereist de
       bewegingssensor terwijl het alarm scherp staat).
+  ble_proxy_host:
+    name: BLE-proxy host (optioneel)
+    description: >-
+      Optioneel. IP-adres of .local-hostnaam van een ESPHome Bluetooth-proxy om de
+      tracker óók vanaf een tweede plek te horen (bijv. de schuur). Vergroot het
+      bereik van de "in bereik"-aanwezigheid zonder extra module-accu te kosten.
+      Leeg laten om alleen de lokale adapter te gebruiken.
+  ble_proxy_port:
+    name: BLE-proxy poort
+    description: ESPHome native API-poort (standaard 6053).
+  ble_proxy_key:
+    name: BLE-proxy encryptiesleutel
+    description: >-
+      De API-encryptiesleutel (noise PSK) van het ESPHome-apparaat — te vinden onder
+      Instellingen → Apparaten & diensten → dat ESPHome-apparaat → Encryptiesleutel.
+      Verplicht als er een proxy-host is ingevuld.
   probe_frames:
     name: COMODULE-probe (ontwikkelaar)
     description: >-

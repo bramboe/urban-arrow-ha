@@ -34,6 +34,22 @@ configuration:
       range). Connection-free, so it costs the module no extra battery and the
       "In range" sensor works even while disarmed. It detects the bike LEAVING
       the area, not shaking it in place (that needs the motion sensor while armed).
+  ble_proxy_host:
+    name: BLE proxy host (optional)
+    description: >-
+      Optional. IP address or .local hostname of an ESPHome Bluetooth proxy to also
+      listen for the tracker from (e.g. a second spot like the shed). Extends the
+      "In range" presence coverage with no extra module-battery cost. Leave empty to
+      use only the local adapter.
+  ble_proxy_port:
+    name: BLE proxy port
+    description: ESPHome native API port (default 6053).
+  ble_proxy_key:
+    name: BLE proxy encryption key
+    description: >-
+      The ESPHome device's API encryption key (noise PSK), found under Settings →
+      Devices & Services → that ESPHome device → Encryption key. Required if a proxy
+      host is set.
   probe_frames:
     name: COMODULE probe (developer)
     description: >-

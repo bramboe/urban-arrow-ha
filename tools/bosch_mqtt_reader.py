@@ -250,6 +250,17 @@ _adv_last: dict[str, str] = {}
 # movement signal using the bike's big battery. Logs the hub advert appearing/
 # disappearing WITHOUT connecting; pauses the normal bike read loop while on.
 _hub_probe: bool = os.getenv("HUB_PROBE", "0") == "1"
+# Optional remote ESPHome Bluetooth proxy for the presence layer: lets HA hear the
+# tracker from a second spot (e.g. the shed) so "in range" is more robust and the
+# bike has to leave EVERY listener's range before the leave-range alarm fires.
+# Host may be an IP or an .local name; key = the ESPHome device's API encryption
+# key (noise PSK). Empty host = disabled. Connection-free w.r.t. the module.
+_PROXY_HOST: str = os.getenv("BLE_PROXY_HOST", "").strip()
+_PROXY_PORT: int = int(os.getenv("BLE_PROXY_PORT", "6053") or 6053)
+_PROXY_KEY: str = os.getenv("BLE_PROXY_KEY", "").strip()
+# Last time our tracker's advert was heard by ANY source (local adapter, held
+# connection, or the remote BLE proxy). Drives the presence binary_sensor.
+_tracker_seen_ts: float = 0.0
 
 # Devices seen during scans, for the setup UI: address -> {name,rssi,kind,module_mac,ts}.
 _discovered: dict[str, dict] = {}
@@ -1413,9 +1424,9 @@ async def presence_loop() -> None:
     listening for its advertisement (no connection = no module-battery drain, works
     even while disarmed). Publishes binary_sensor.urban_arrow_present, and — when
     armed — trips the alarm the moment the bike leaves range (present -> absent)."""
+    global _tracker_seen_ts
     present: "bool | None" = None
     was_present = False
-    last_seen = 0.0
     while True:
         try:
             if _tracker_off:
@@ -1433,12 +1444,13 @@ async def presence_loop() -> None:
                 await asyncio.sleep(PRESENCE_GAP)
                 continue
             now = time.time()
-            # If the motion watcher already holds the connection, it's in range.
+            # Seen by any source? Held connection or a local scan hit; the remote
+            # BLE proxy (if configured) also updates _tracker_seen_ts on its own.
             if _last.get("tracker_connected"):
-                last_seen = now
+                _tracker_seen_ts = now
             elif await scan_tracker_present():
-                last_seen = now
-            is_present = (now - last_seen) < PRESENCE_GRACE
+                _tracker_seen_ts = now
+            is_present = (now - _tracker_seen_ts) < PRESENCE_GRACE
             if is_present != present:
                 present = is_present
                 _last["tracker_present"] = is_present
@@ -1454,6 +1466,77 @@ async def presence_loop() -> None:
         except Exception as err:  # noqa: BLE001
             log.warning("presence loop: %s: %s", type(err).__name__, err)
         await asyncio.sleep(PRESENCE_GAP)
+
+
+def _proxy_adv_is_tracker(adv) -> bool:
+    """True if an ESPHome-proxy advertisement is our COMODULE tracker (company
+    0x020F whose payload starts with the module MAC; else fall back to the name)."""
+    md = getattr(adv, "manufacturer_data", None)
+    items: list = []
+    if isinstance(md, dict):
+        items = list(md.items())
+    elif isinstance(md, (list, tuple)):
+        for it in md:
+            try:
+                items.append((it[0], it[1]))
+            except Exception:  # noqa: BLE001
+                pass
+    for cid, val in items:
+        if cid in (0x020F, 527):
+            h = bytes(val).hex()
+            if _tracker_mac:
+                return h.startswith(_tracker_mac.replace(":", "").lower())
+            return True
+    nm = (getattr(adv, "name", "") or "").lower()
+    return ("urbanarrow" in nm) and not _tracker_mac
+
+
+async def proxy_presence_loop() -> None:
+    """Optional: subscribe to a remote ESPHome Bluetooth proxy and feed the presence
+    layer when it hears our tracker. Extends 'in range' coverage with zero module
+    cost. Fully isolated: any failure just disables the proxy, local presence stays."""
+    if not _PROXY_HOST or not _PROXY_KEY:
+        return
+    try:
+        from aioesphomeapi import APIClient, ReconnectLogic
+        from zeroconf.asyncio import AsyncZeroconf
+    except Exception as err:  # noqa: BLE001
+        log.warning("BLE proxy disabled (libs unavailable): %s", err)
+        return
+
+    def on_adv(adv) -> None:
+        if _tracker_off:
+            return
+        try:
+            if _proxy_adv_is_tracker(adv):
+                global _tracker_seen_ts
+                _tracker_seen_ts = time.time()
+        except Exception:  # noqa: BLE001
+            pass
+
+    try:
+        azc = AsyncZeroconf()
+        cli = APIClient(_PROXY_HOST, _PROXY_PORT, "", noise_psk=_PROXY_KEY,
+                        zeroconf_instance=azc.zeroconf)
+
+        async def on_connect() -> None:
+            try:
+                await cli.subscribe_bluetooth_le_advertisements(on_adv)
+                log.info("BLE proxy connected: %s:%s", _PROXY_HOST, _PROXY_PORT)
+            except Exception as err:  # noqa: BLE001
+                log.warning("BLE proxy subscribe failed: %s", err)
+
+        async def on_disconnect(expected: bool) -> None:
+            log.info("BLE proxy disconnected (%s)", _PROXY_HOST)
+
+        reconnect = ReconnectLogic(client=cli, on_connect=on_connect,
+                                   on_disconnect=on_disconnect,
+                                   zeroconf_instance=azc.zeroconf, name=_PROXY_HOST)
+        await reconnect.start()
+        while True:
+            await asyncio.sleep(3600)
+    except Exception as err:  # noqa: BLE001
+        log.warning("BLE proxy loop failed (%s): %s", _PROXY_HOST, err)
 
 
 async def hub_probe_loop() -> None:
@@ -1502,6 +1585,7 @@ async def start_motion(_mqtt_client: mqtt.Client) -> None:
     asyncio.create_task(motion_watcher())
     publish_present(False)
     asyncio.create_task(presence_loop())
+    asyncio.create_task(proxy_presence_loop())
     asyncio.create_task(hub_probe_loop())
 
 
@@ -1852,6 +1936,7 @@ async def _ui_status(_request):
                               "adv_probe": _adv_probe, "hub_probe": _hub_probe,
                               "bike_off": _bike_off,
                               "presence_alarm": _presence_alarm,
+                              "ble_proxy": bool(_PROXY_HOST and _PROXY_KEY),
                               "device": {"manufacturer": DEVICE["manufacturer"],
                                          "model": DEVICE["model"]},
                               "last": _last})

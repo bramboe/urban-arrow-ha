@@ -1,5 +1,5 @@
 name: Bosch Kiox eBike
-version: "2.32.0"
+version: "2.33.0"
 slug: urban_arrow_battery
 description: >-
   Reads a Bosch Smart System eBike (Kiox display) over Bluetooth — battery, range
@@ -30,6 +30,9 @@ options:
   motion_off_delay: 12
   tracker_always_on: false
   presence_alarm: true
+  ble_proxy_host: ""
+  ble_proxy_port: 6053
+  ble_proxy_key: ""
   probe_frames: false
   adv_probe: false
   hub_probe: false
@@ -53,6 +56,11 @@ schema:
   # Passive anti-theft: when armed, trip the alarm if the tracker advertisement
   # disappears (bike taken out of BLE range). Connection-free = no module drain.
   presence_alarm: bool?
+  # Optional remote ESPHome Bluetooth proxy for the presence layer (extra listening
+  # spot). Host = IP or .local name; key = the ESPHome device's API encryption key.
+  ble_proxy_host: str?
+  ble_proxy_port: int?
+  ble_proxy_key: str?
   # TEMPORARY diagnostic: log distinct COMODULE 155e status frames to find which
   # byte flips when the main battery is removed/inserted. Keeps the tracker
   # connected (no need to arm). Turn off again after the test.

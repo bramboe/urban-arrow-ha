@@ -9,6 +9,11 @@ else
 fi
 export COOLDOWN="$(bashio::config 'cooldown')"
 
+# Optional remote ESPHome Bluetooth proxy for the presence layer.
+export BLE_PROXY_HOST="$(bashio::config 'ble_proxy_host')"
+export BLE_PROXY_PORT="$(bashio::config 'ble_proxy_port')"
+export BLE_PROXY_KEY="$(bashio::config 'ble_proxy_key')"
+
 # MQTT: use the configured override, else the Home Assistant MQTT service.
 if bashio::config.has_value 'mqtt_host'; then
     export MQTT_HOST="$(bashio::config 'mqtt_host')"
