@@ -2389,11 +2389,11 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
     if(CLD.speed!=null){cs.style.display='';cs.style.background='rgba(3,169,244,.16)';cs.style.color='#03a9f4';cs.textContent=CLD.speed+' km/h';}else cs.style.display='none';
     $('#cloudHome').textContent=CLD.home===true?('✓ '+t('at_home')):(CLD.distance_m!=null?fmtDist(CLD.distance_m):'—');
     const mp=$('#cloudMap');
-    if(CLD.latitude!=null){const ll=CLD.latitude.toFixed(5)+', '+CLD.longitude.toFixed(5);
-      $('#cloudLoc').innerHTML=`<a href="https://www.google.com/maps?q=${CLD.latitude},${CLD.longitude}" target="_blank" rel="noopener">${ll}</a>`;
-      const key=CLD.latitude.toFixed(5)+','+CLD.longitude.toFixed(5);
-      if(mp.dataset.k!==key){mp.dataset.k=key;
-        mp.src=`https://maps.google.com/maps?q=${CLD.latitude},${CLD.longitude}&z=16&output=embed`;}
+    if(CLD.latitude!=null){const la=CLD.latitude,lo=CLD.longitude;const ll=la.toFixed(5)+', '+lo.toFixed(5);
+      $('#cloudLoc').innerHTML=`<a href="https://www.openstreetmap.org/?mlat=${la}&mlon=${lo}#map=16/${la}/${lo}" target="_blank" rel="noopener">${ll}</a>`;
+      const key=la.toFixed(5)+','+lo.toFixed(5);
+      if(mp.dataset.k!==key){mp.dataset.k=key;const dla=0.0025,dlo=0.004;
+        mp.src=`https://www.openstreetmap.org/export/embed.html?bbox=${lo-dlo}%2C${la-dla}%2C${lo+dlo}%2C${la+dla}&layer=mapnik&marker=${la}%2C${lo}`;}
       mp.style.display='';}
     else {$('#cloudLoc').textContent='—';mp.style.display='none';}
     $('#cloudUpd').textContent=CLD.ts?ago(CLD.ts):'';}
