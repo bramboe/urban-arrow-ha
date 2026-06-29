@@ -2202,8 +2202,7 @@ button.sec{background:var(--chip);color:var(--ink)}button:disabled{opacity:.5;cu
       <div style="margin-top:14px"><button class=sec id=trkBtn data-i18n=refresh_module onclick="refreshTracker()">Module-accu verversen</button></div></div>
     <div class=card id=cloudCard style="display:none"><div class=lbl data-i18n=cloud>Cloud (PON)</div>
       <div class=between><div class=big id=cloudState>—</div><span class=pill id=cloudSpeed></span></div>
-      <div class=between style="margin-top:10px;font-size:14px"><span class=muted data-i18n=cloud_charge>Module-lading (cloud)</span><b id=cloudCharge>—</b></div>
-      <div class=between style="margin-top:6px;font-size:14px"><span class=muted data-i18n=cloud_loc>Locatie</span><b id=cloudLoc>—</b></div>
+      <div class=between style="margin-top:10px;font-size:14px"><span class=muted data-i18n=cloud_loc>Locatie</span><b id=cloudLoc>—</b></div>
       <iframe id=cloudMap title=map style="display:none;width:100%;height:190px;border:0;border-radius:10px;margin-top:10px" loading=lazy referrerpolicy=no-referrer></iframe>
       <div class=sub id=cloudUpd style="margin-top:8px"></div></div>
   </div>
@@ -2334,9 +2333,12 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
   const comp=[['c_drive',cv(L.drive_unit,'drive')],['c_batt',cv(L.battery_model,'battery')],['c_disp',cv(L.display,'display')],['c_hub',cv(di.model||L.model_number,'controller')]];
   $('#compInfo').innerHTML=dl(comp);
   // GPS module card (rail)
-  const tbv=L.tracker_battery;
+  // one module-battery %: cloud preferred, BLE as backup
+  const cloudC=(L.cloud&&L.cloud.module_charge!=null)?L.cloud.module_charge:null;
+  const tbv=(cloudC!=null)?cloudC:L.tracker_battery;
   $('#gpsBatt').innerHTML=(tbv!=null?tbv:'—')+'<small>%</small>';
-  $('#gpsUpd').textContent=L.tracker_updated?ago(L.tracker_updated):t('no_reading');
+  const gUpd=(cloudC!=null)?(L.cloud&&L.cloud.ts):L.tracker_updated;
+  $('#gpsUpd').textContent=gUpd?ago(gUpd):t('no_reading');
   const gc=$('#gpsConn');
   if(L.tracker_connected){gc.style.display='';gc.style.background='rgba(67,160,71,.18)';gc.style.color='#43a047';gc.textContent=t('gps_conn');}
   else if(L.tracker_present===true){gc.style.display='';gc.style.background='rgba(67,160,71,.18)';gc.style.color='#43a047';gc.textContent=t('in_range');}
@@ -2352,7 +2354,6 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
     $('#cloudState').textContent=CLD.loc_state==='moving'?t('cl_moving'):t('cl_parked');
     const cs=$('#cloudSpeed');
     if(CLD.speed!=null){cs.style.display='';cs.style.background='rgba(3,169,244,.16)';cs.style.color='#03a9f4';cs.textContent=CLD.speed+' km/h';}else cs.style.display='none';
-    $('#cloudCharge').textContent=CLD.module_charge!=null?CLD.module_charge+'%':'—';
     const mp=$('#cloudMap');
     if(CLD.latitude!=null){const ll=CLD.latitude.toFixed(5)+', '+CLD.longitude.toFixed(5);
       $('#cloudLoc').innerHTML=`<a href="https://www.google.com/maps?q=${CLD.latitude},${CLD.longitude}" target="_blank" rel="noopener">${ll}</a>`;
