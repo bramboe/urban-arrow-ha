@@ -240,6 +240,7 @@ PON_BIKE_ID: str = os.getenv("PON_BIKE_ID", "").strip()
 PON_POLL: float = float(os.getenv("PON_POLL", "120") or 120)
 PON_FILE = "/data/pon.json"
 CLOUD_TOPIC = f"{NODE}/cloud"
+CLOUD_STATE_TOPIC = f"{NODE}/cloud/state"  # plain device_tracker state (moving/parked)
 
 
 def _pon_load_refresh() -> "str | None":
@@ -823,8 +824,7 @@ def _publish_discovery(client: mqtt.Client) -> None:
             json.dumps({
                 "name": "Location",
                 "unique_id": f"{NODE}_location",
-                "state_topic": CLOUD_TOPIC,
-                "value_template": "{{ value_json.loc_state }}",
+                "state_topic": CLOUD_STATE_TOPIC,
                 "json_attributes_topic": CLOUD_TOPIC,
                 "source_type": "gps",
                 "icon": "mdi:map-marker",
@@ -1863,6 +1863,7 @@ async def pon_cloud_loop() -> None:
                 _last["cloud"] = payload
                 if _mqtt is not None:
                     _mqtt.publish(CLOUD_TOPIC, json.dumps(payload), retain=True)
+                    _mqtt.publish(CLOUD_STATE_TOPIC, payload["loc_state"], retain=True)
         except Exception as err:  # noqa: BLE001
             log.warning("PON cloud loop: %s: %s", type(err).__name__, err)
         await asyncio.sleep(PON_POLL)
