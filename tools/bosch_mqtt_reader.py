@@ -2400,9 +2400,9 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
     try{
       if(!window.L){mp.style.display='none';$('#cloudUpd').textContent='map: leaflet not loaded';}
       else if(CLD.latitude!=null){const la=CLD.latitude,lo=CLD.longitude;mp.style.display='';
-        if(!window._lmap){window._lmap=L.map(mp,{zoomControl:true,attributionControl:true});
-          L.tileLayer('tile/{z}/{x}/{y}',{maxZoom:20,attribution:'© OpenStreetMap, © CARTO'}).addTo(window._lmap);
-          window._lmark=L.circleMarker([la,lo],{radius:9,color:'#fff',weight:3,fillColor:'#03a9f4',fillOpacity:1}).addTo(window._lmap);
+        if(!window._lmap){window._lmap=window.L.map(mp,{zoomControl:true,attributionControl:true});
+          window.L.tileLayer('tile/{z}/{x}/{y}',{maxZoom:20,attribution:'© OpenStreetMap, © CARTO'}).addTo(window._lmap);
+          window._lmark=window.L.circleMarker([la,lo],{radius:9,color:'#fff',weight:3,fillColor:'#03a9f4',fillOpacity:1}).addTo(window._lmap);
           window._lmap.setView([la,lo],16);
           setTimeout(()=>{try{window._lmap.invalidateSize();}catch(e){}},300);}
         else{window._lmap.setView([la,lo]);window._lmark.setLatLng([la,lo]);}
