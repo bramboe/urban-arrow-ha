@@ -240,6 +240,9 @@ PON_TOKEN_URL = "https://consumer.login.pon.bike/oauth/token"
 PON_CLIENT_ID: str = os.getenv("PON_CLIENT_ID", "").strip()
 PON_BIKE_ID: str = os.getenv("PON_BIKE_ID", "").strip()
 PON_POLL: float = float(os.getenv("PON_POLL", "120") or 120)
+# When the tracker is heard over BLE (bike home/in range) we already know it's
+# home, so poll the cloud only occasionally; poll fast only when it's away.
+PON_POLL_HOME: float = float(os.getenv("PON_POLL_HOME", "1800") or 1800)
 PON_FILE = "/data/pon.json"
 CLOUD_TOPIC = f"{NODE}/cloud"
 CLOUD_STATE_TOPIC = f"{NODE}/cloud/state"  # plain device_tracker state (moving/parked)
@@ -2037,6 +2040,13 @@ async def pon_cloud_loop() -> None:
                         if isinstance(it, dict) and it.get("speedInKmh") is not None:
                             payload["speed"] = it["speedInKmh"]
                             break
+            # If BLE hears the tracker, the bike is in range = home: trust that over
+            # the (possibly stale) cloud GPS, and poll the cloud only occasionally.
+            ble_present = bool(_tracker_seen_ts and
+                               time.time() - _tracker_seen_ts < PRESENCE_GRACE)
+            if ble_present and payload:
+                payload["home"] = True
+                payload["distance_m"] = 0
             if payload:
                 payload["in_use"] = bool(payload.get("speed", 0) > 0)
                 payload["loc_state"] = "moving" if payload["in_use"] else "parked"
@@ -2047,7 +2057,8 @@ async def pon_cloud_loop() -> None:
                     _mqtt.publish(CLOUD_STATE_TOPIC, payload["loc_state"], retain=True)
         except Exception as err:  # noqa: BLE001
             log.warning("PON cloud loop: %s: %s", type(err).__name__, err)
-        await asyncio.sleep(PON_POLL)
+            ble_present = False
+        await asyncio.sleep(PON_POLL_HOME if ble_present else PON_POLL)
 
 
 async def start_motion(_mqtt_client: mqtt.Client) -> None:
@@ -2384,7 +2395,7 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
   if(L.tracker_connected){gc.style.display='';gc.style.background='rgba(67,160,71,.18)';gc.style.color='#43a047';gc.textContent=t('gps_conn');}
   else if(CLp&&CLp.home===true){gc.style.display='';gc.style.background='rgba(67,160,71,.18)';gc.style.color='#43a047';gc.textContent=t('at_home');}
   else if(CLp&&CLp.home===false){gc.style.display='';gc.style.background='rgba(251,140,0,.16)';gc.style.color='#fb8c00';gc.textContent=(CLp.distance_m!=null?fmtDist(CLp.distance_m):t('away'));}
-  else if(L.tracker_present===true){gc.style.display='';gc.style.background='rgba(67,160,71,.18)';gc.style.color='#43a047';gc.textContent=t('in_range');}
+  else if(L.tracker_present===true){gc.style.display='';gc.style.background='rgba(67,160,71,.18)';gc.style.color='#43a047';gc.textContent=t('at_home');}
   else if(L.tracker_present===false){gc.style.display='';gc.style.background='rgba(229,57,53,.16)';gc.style.color='#e53935';gc.textContent=t('out_range');}
   else gc.style.display='none';
   const mb=$('#mainBatt');
