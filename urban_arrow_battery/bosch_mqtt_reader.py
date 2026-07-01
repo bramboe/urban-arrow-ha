@@ -2010,6 +2010,8 @@ async def pon_cloud_loop() -> None:
             elif isinstance(lk, dict):
                 entry = lk
             if entry:
+                if entry.get("lastOnline"):
+                    payload["last_online"] = entry["lastOnline"]
                 loc = (entry.get("location") or {}).get("coordinate") or {}
                 if loc.get("latitude") is not None and loc.get("longitude") is not None:
                     payload["latitude"] = loc["latitude"]
@@ -2392,11 +2394,16 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
   const gUpd=(cloudC!=null)?(L.cloud&&L.cloud.ts):L.tracker_updated;
   $('#gpsUpd').textContent=gUpd?ago(gUpd):t('no_reading');
   const gc=$('#gpsConn');const CLp=L.cloud;
-  if(L.tracker_connected){gc.style.display='';gc.style.background='rgba(67,160,71,.18)';gc.style.color='#43a047';gc.textContent=t('gps_conn');}
-  else if(CLp&&CLp.home===true){gc.style.display='';gc.style.background='rgba(67,160,71,.18)';gc.style.color='#43a047';gc.textContent=t('at_home');}
-  else if(CLp&&CLp.home===false){gc.style.display='';gc.style.background='rgba(251,140,0,.16)';gc.style.color='#fb8c00';gc.textContent=(CLp.distance_m!=null?fmtDist(CLp.distance_m):t('away'));}
-  else if(L.tracker_present===true){gc.style.display='';gc.style.background='rgba(67,160,71,.18)';gc.style.color='#43a047';gc.textContent=t('at_home');}
-  else if(L.tracker_present===false){gc.style.display='';gc.style.background='rgba(229,57,53,.16)';gc.style.color='#e53935';gc.textContent=t('out_range');}
+  const setPill=(bg,col,txt)=>{gc.style.display='';gc.style.background=bg;gc.style.color=col;gc.textContent=txt;};
+  const GRN='rgba(67,160,71,.18)',GRNC='#43a047',AMB='rgba(251,140,0,.16)',AMBC='#fb8c00';
+  // Priority: BLE in range = home; then riding (speed) = moving (beats stale GPS);
+  // then cloud home/away. Riding must win over a stale "home" GPS fix.
+  if(L.tracker_connected)setPill(GRN,GRNC,t('gps_conn'));
+  else if(L.tracker_present===true)setPill(GRN,GRNC,t('at_home'));
+  else if(CLp&&CLp.in_use)setPill(AMB,AMBC,t('cl_moving'));
+  else if(CLp&&CLp.home===true)setPill(GRN,GRNC,t('at_home'));
+  else if(CLp&&CLp.home===false)setPill(AMB,AMBC,CLp.distance_m!=null?fmtDist(CLp.distance_m):t('away'));
+  else if(L.tracker_present===false)setPill('rgba(229,57,53,.16)','#e53935',t('out_range'));
   else gc.style.display='none';
   const mb=$('#mainBatt');
   if(L.main_battery===true){mb.textContent='🔌 '+t('mb_in');}
@@ -2408,7 +2415,7 @@ async function refresh(){const s=await api('api/status');const L=s.last||{};cons
     $('#cloudState').textContent=CLD.loc_state==='moving'?t('cl_moving'):t('cl_parked');
     const cs=$('#cloudSpeed');
     if(CLD.speed!=null){cs.style.display='';cs.style.background='rgba(3,169,244,.16)';cs.style.color='#03a9f4';cs.textContent=CLD.speed+' km/h';}else cs.style.display='none';
-    $('#cloudHome').textContent=CLD.home===true?('✓ '+t('at_home')):(CLD.distance_m!=null?fmtDist(CLD.distance_m):'—');
+    $('#cloudHome').textContent=(L.tracker_present===true)?('✓ '+t('at_home')):CLD.in_use?t('cl_moving'):CLD.home===true?('✓ '+t('at_home')):(CLD.distance_m!=null?fmtDist(CLD.distance_m):'—');
     const mp=$('#cloudMap');
     try{
       if(!window.L){mp.style.display='none';$('#cloudUpd').textContent='map: leaflet not loaded';}
